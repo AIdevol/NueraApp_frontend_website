@@ -1,26 +1,165 @@
 @import "tailwindcss";
 
+/* Deep black UI + orange accent (buttons & focus) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #08080a;
+  --foreground: #fafafa;
+  --primary: #ff7a1a;
+  --primary-dark: #ea580c;
+  --primary-mid: #fb923c;
+  --primary-light: #fdba74;
+  --background-dark: #030303;
+  --surface: #0c0c0f;
+  --surface-elevated: #141418;
+}
+
+.dark {
+  --background: #030303;
+  --foreground: #fafafa;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not(.light) {
+    --background: #030303;
+    --foreground: #fafafa;
+  }
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-primary: var(--primary);
+  --color-primary-dark: var(--primary-dark);
+  --color-primary-mid: var(--primary-mid);
+  --color-primary-light: var(--primary-light);
+  --color-background-light: #0a0a0c;
+  --color-background-dark: #030303;
+  --font-sans: var(--font-space-grotesk);
+  --font-display: var(--font-lexend), "Lexend", sans-serif;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans), system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+}
+
+/* Material Symbols baseline */
+.material-symbols-outlined {
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;
+}
+
+.glassmorphism {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 122, 26, 0.06) 0%,
+    rgba(12, 12, 15, 0.85) 50%,
+    rgba(255, 122, 26, 0.04) 100%
+  );
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 122, 26, 0.14);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 24px 48px -24px rgba(0, 0, 0, 0.6);
+}
+
+.dark .glassmorphism {
+  border-color: rgba(255, 122, 26, 0.12);
+}
+
+.neon-glow {
+  box-shadow:
+    0 0 20px rgba(255, 122, 26, 0.5),
+    0 0 40px rgba(255, 122, 26, 0.15);
+}
+
+/* Primary CTA: orange button polish */
+.btn-primary-orange {
+  background-color: var(--primary);
+  color: #fff;
+  font-weight: 700;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease;
+}
+.btn-primary-orange:hover {
+  background-color: var(--primary-mid);
+  box-shadow: 0 12px 28px -6px rgba(255, 122, 26, 0.55);
+}
+.btn-primary-orange:active {
+  transform: scale(0.98);
+}
+
+.content-document .content-body a {
+  color: var(--primary);
+}
+.content-document .content-body a:hover {
+  opacity: 0.9;
+}
+
+/* Content viewer: responsive, full width, override API HTML fixed widths */
+.content-document {
+  width: 100%;
+  max-width: 100%;
+}
+.content-document .content-body,
+.content-document .content-body .container,
+.content-document .content-body [class*="container"],
+.content-document .content-body header,
+.content-document .content-body .toc {
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box;
+}
+.content-document .content-body .toc ol {
+  columns: 1;
+}
+@media (min-width: 640px) {
+  .content-document .content-body .toc ol {
+    columns: 2;
+  }
+}
+@media (min-width: 1024px) {
+  .content-document .content-body .toc ol {
+    columns: 2;
+    column-gap: 2rem;
+  }
+}
+.content-document .content-body pre,
+.content-document .content-body .formula,
+.content-document .content-body .example,
+.content-document .content-body .note {
+  max-width: 100%;
+  overflow-x: auto;
+}
+.content-document .content-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Landing: employer logo marquee */
+@keyframes landing-marquee {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.landing-marquee {
+  animation: landing-marquee 65s linear infinite;
+}
+
+.landing-marquee:hover {
+  animation-play-state: paused;
+}
+
+/* Subtle animated mesh for marketing hero (optional class) */
+.hero-mesh-orange {
+  background:
+    radial-gradient(ellipse 100% 80% at 90% 10%, rgba(255, 122, 26, 0.18) 0%, transparent 45%),
+    radial-gradient(ellipse 80% 60% at 10% 80%, rgba(251, 146, 60, 0.1) 0%, transparent 50%),
+    radial-gradient(ellipse 60% 50% at 50% 50%, rgba(234, 88, 12, 0.06) 0%, transparent 55%);
 }
