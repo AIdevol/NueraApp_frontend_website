@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect } from "react";
+import { Suspense, useEffect } from "react";
 
-export default function LoginCallbackPage() {
+function LoginCallbackInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -28,5 +28,19 @@ export default function LoginCallbackPage() {
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
       <p className="text-slate-600 dark:text-slate-400">Completing sign-in...</p>
     </div>
+  );
+}
+
+export default function LoginCallbackPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900">
+          <p className="text-slate-600 dark:text-slate-400">Completing sign-in...</p>
+        </div>
+      }
+    >
+      <LoginCallbackInner />
+    </Suspense>
   );
 }

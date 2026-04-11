@@ -162,7 +162,7 @@ function highlightPythonLike(code: string): string {
   return out.replace(/@@TOK(\d+)@@/g, (_, i) => tokens[Number(i)] ?? "");
 }
 
-/** Simulated “run current script” — surfaces print() strings and a short summary (no server execution). */
+/** Fallback when API run is unavailable — only extracts simple print('literal') / print("literal"). */
 function simulatePythonRun(fileName: string, code: string): string[] {
   const out: string[] = [];
   out.push(`>> python ${fileName}`);
@@ -174,11 +174,23 @@ function simulatePythonRun(fileName: string, code: string): string[] {
     found++;
   }
   if (found === 0) {
+    const hasPrint = /\bprint\s*\(/.test(code);
     const fStrings = code.match(/print\s*\(\s*f?(["'`])([^"'`]*)\1\s*\)/g);
-    if (fStrings?.length) out.push("(Simulated: string prints detected — full f-string interpolation not evaluated.)");
-    else out.push("(No print() literals found — connect a backend runner for full execution.)");
+    if (fStrings?.length) {
+      out.push(
+        "(Browser preview: f-string / complex print() not evaluated — use Run with API for real output.)"
+      );
+    } else if (hasPrint) {
+      out.push(
+        "(Browser preview: only simple print('text') / print(\"text\") are shown here. For real execution, ensure the backend is running and Run will use the server.)"
+      );
+    } else {
+      out.push(
+        "(No simple print('...') found in preview — start the NeuraApp API and Run will execute Python on the server.)"
+      );
+    }
   }
-  out.push(`>> exit code 0 (simulated)`);
+  out.push(`>> exit code 0 (preview only — not executing code)`);
   return out;
 }
 
@@ -470,6 +482,7 @@ export default function ProjectPlaygroundPage() {
   const [datasets, setDatasets] = useState<{ name: string; size: number }[]>([]);
 
   // ── Training ──
+  const [consoleInputLine, setConsoleInputLine] = useState("");
   const [logs,         setLogs]         = useState<string[]>([
     ">> ML Playground ready. Add files in Explorer, set hyperparameters, then train.",
   ]);
@@ -715,7 +728,7 @@ export default function ProjectPlaygroundPage() {
     }
   }
 
-  function handleRunCurrentFile() {
+  async function handleRunCurrentFile() {
     if (!openFileId) {
       showToast("Open a file first.", false);
       return;
@@ -725,14 +738,74 @@ export default function ProjectPlaygroundPage() {
     if (!node || node.kind !== "file") return;
     const name = node.name;
     if (!name.endsWith(".py")) {
-      setLogs((prev) => [...prev, `>> Run file: ${name} — only .py simulation is available in-browser.`]);
+      setLogs((prev) => [...prev, `>> Run file: ${name} — only .py is supported for Run.`]);
       setRightPanelTab("console");
       return;
     }
+    const api = getPublicApiUrl();
+    if (api) {
+      try {
+        const res = await fetch(`${api}/api/v1/practice-problems/run-python`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code: editorCode, timeout_sec: 12 }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          ok?: boolean;
+          exit_code?: number;
+          stdout?: string;
+          stderr?: string;
+          detail?: string;
+        };
+        if (!res.ok) {
+          throw new Error((data as { detail?: string }).detail || `HTTP ${res.status}`);
+        }
+        if (data.ok === false) {
+          const detail = data.detail || "Run failed";
+          setLogs((prev) => [...prev, "", `>> Server: ${detail}`, `>> Preview fallback:`, ...simulatePythonRun(name, editorCode)]);
+          setRightPanelTab("console");
+          showToast(detail, false);
+          return;
+        }
+        if (typeof data.exit_code === "number") {
+          const lines: string[] = [`>> python ${name} (server)`];
+          const so = (data.stdout ?? "").trimEnd();
+          const se = (data.stderr ?? "").trimEnd();
+          if (so) lines.push(...so.split("\n"));
+          if (se) lines.push(...se.split("\n").map((l) => `[stderr] ${l}`));
+          if (!so && !se) lines.push("(no output)");
+          lines.push(`>> exit code ${data.exit_code}`);
+          setLogs((prev) => [...prev, "", ...lines]);
+          setRightPanelTab("console");
+          showToast("Run finished — see Console");
+          return;
+        }
+        setLogs((prev) => [
+          ...prev,
+          "",
+          `>> Unexpected API response`,
+          ...simulatePythonRun(name, editorCode),
+        ]);
+        setRightPanelTab("console");
+        showToast("Unexpected response — preview in Console", false);
+        return;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setLogs((prev) => [
+          ...prev,
+          "",
+          `>> Could not reach API (${msg}). Preview only:`,
+          ...simulatePythonRun(name, editorCode),
+        ]);
+        setRightPanelTab("console");
+        showToast("API unreachable — preview in Console", false);
+        return;
+      }
+    }
     const lines = simulatePythonRun(name, editorCode);
-    setLogs((prev) => [...prev, "", ...lines]);
+    setLogs((prev) => [...prev, "", `>> NEXT_PUBLIC_API_URL not set — preview only:`, ...lines]);
     setRightPanelTab("console");
-    showToast("Script output (simulated) sent to Console");
+    showToast("Configure API URL for real Python runs", false);
   }
 
   function exportWorkspaceJson() {
@@ -1150,7 +1223,7 @@ export default function ProjectPlaygroundPage() {
             </button>
             <button
               type="button"
-              title="Run current file (simulated console) — Ctrl+Shift+Enter"
+              title="Run current .py — executes on server when API is configured, else preview only — Ctrl+Shift+Enter"
               onClick={handleRunCurrentFile}
               className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border ${border} ${textDim} hover:${text}`}
             >
@@ -1664,24 +1737,64 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
             )}
 
             {rightPanelTab === "console" && (
-              <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex-1 flex flex-col overflow-hidden min-h-0">
                 <div className={`px-3 py-1.5 flex items-center justify-between border-b ${border} ${bg2}`}>
                   <span className={`text-[10px] font-semibold uppercase tracking-wider ${textDim}`}>Console</span>
-                  <button onClick={() => navigator.clipboard.writeText(logs.join("\n")).catch(() => {})}
-                    className={`${textDim} hover:${text}`}>
-                    <span className="material-symbols-outlined text-[14px]">content_copy</span>
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      title="Clear log"
+                      onClick={() => setLogs([">> Console cleared."])}
+                      className={`${textDim} hover:${text} p-1 rounded`}
+                    >
+                      <span className="material-symbols-outlined text-[14px]">mop</span>
+                    </button>
+                    <button
+                      type="button"
+                      title="Copy all"
+                      onClick={() => navigator.clipboard.writeText(logs.join("\n")).catch(() => {})}
+                      className={`${textDim} hover:${text} p-1 rounded`}
+                    >
+                      <span className="material-symbols-outlined text-[14px]">content_copy</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="flex-1 p-3 overflow-y-auto font-mono text-[11px] space-y-0.5">
+                <div className="flex-1 min-h-0 p-3 overflow-y-auto font-mono text-[11px] space-y-0.5">
                   {logs.map((line, idx) => (
-                    <div key={idx} className={
-                      line.startsWith(">>") ? textDim :
-                      line.includes("✅") || line.includes("✓") ? "text-emerald-400" :
-                      line.includes("⏸") || line.includes("⛔") ? "text-amber-400" :
-                      text
-                    }>{line || <br />}</div>
+                    <div
+                      key={idx}
+                      className={
+                        line.startsWith("[stderr]") || /Error|Traceback|Exception/i.test(line)
+                          ? "text-rose-400 break-words"
+                          : line.startsWith(">>")
+                            ? textDim
+                            : line.includes("✅") || line.includes("✓")
+                              ? "text-emerald-400"
+                              : line.includes("⏸") || line.includes("⛔")
+                                ? "text-amber-400"
+                                : text
+                      }
+                    >
+                      {line || <br />}
+                    </div>
                   ))}
                   {running && <div className={`animate-pulse ${textDim}`}>_</div>}
+                </div>
+                <div className={`shrink-0 border-t ${border} px-2 py-2 ${bg2}`}>
+                  <label className={`block text-[9px] uppercase tracking-wider ${textDim} mb-1`}>Input (notes)</label>
+                  <input
+                    type="text"
+                    value={consoleInputLine}
+                    onChange={(e) => setConsoleInputLine(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && consoleInputLine.trim()) {
+                        setLogs((p) => [...p, `>> ${consoleInputLine.trim()}`]);
+                        setConsoleInputLine("");
+                      }
+                    }}
+                    placeholder="Type here and press Enter — adds a line to the log (does not run Python)"
+                    className={`w-full rounded-lg border ${border} bg-black/30 px-2.5 py-2 text-[11px] font-mono outline-none focus:ring-2 focus:ring-primary/25 ${text}`}
+                  />
                 </div>
               </div>
             )}
@@ -1792,7 +1905,7 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
               <li className="flex justify-between gap-4"><span>Save file</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">⌘/Ctrl + S</kbd></li>
               <li className="flex justify-between gap-4"><span>Find in file</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">⌘/Ctrl + F</kbd></li>
               <li className="flex justify-between gap-4"><span>Train (simulated)</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">⌘/Ctrl + Enter</kbd></li>
-              <li className="flex justify-between gap-4"><span>Run current .py (simulated)</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">⌘/Ctrl + Shift + Enter</kbd></li>
+              <li className="flex justify-between gap-4"><span>Run current .py (server when API up)</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">⌘/Ctrl + Shift + Enter</kbd></li>
               <li className="flex justify-between gap-4"><span>Indent</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">Tab</kbd></li>
             </ul>
             <p className="mt-4 text-xs text-slate-500">

@@ -114,10 +114,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <div
-      className="min-h-screen flex overflow-x-hidden overflow-y-auto relative text-zinc-100"
-      style={{ fontFamily: "var(--font-space-grotesk), 'Space Grotesk', sans-serif" }}
-    >
+    <div className="min-h-screen flex overflow-x-hidden overflow-y-auto relative text-zinc-100 font-sans">
       <AuthFlowBackground />
 
       <div className="hidden lg:flex lg:w-1/2 relative z-10 overflow-hidden">

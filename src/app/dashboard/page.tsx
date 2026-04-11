@@ -91,23 +91,107 @@ export default function DashboardHomePage() {
       </section>
 
       {/* Current module CTA */}
-      <section className="relative overflow-hidden rounded-2xl glassmorphism p-6 md:p-8 shadow-lg">
-        <div className="absolute top-0 right-0 w-64 h-64 bg-primary/10 rounded-full blur-3xl -mr-20 -mt-20" />
-        <div className="relative z-10 flex flex-col md:flex-row gap-8 items-center">
-          <div className="flex-1 flex flex-col gap-5">
-            <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-primary/20 w-fit text-xs font-bold tracking-wider uppercase" style={{ color: primary }}>
-              <span className="material-symbols-outlined text-sm">play_circle</span>Continue learning
-            </div>
-            <div>
-              <h3 className="text-2xl md:text-3xl font-bold text-zinc-50 mb-2">Pick up where you left off</h3>
-              <p className="text-zinc-400">Jump into your learning path, courses, or practice problems.</p>
-            </div>
-            <Link href="/dashboard/learning-path" className="mt-2 flex items-center gap-2 text-white px-6 py-3 rounded-xl font-semibold w-fit hover:brightness-110 shadow-[0_8px_28px_-4px_rgba(255,122,26,0.55)]" style={{ backgroundColor: primary }}>
-              <span className="material-symbols-outlined">resume</span>Resume Learning
-            </Link>
+      {/* Current module CTA */}
+<section className="relative rounded-2xl glassmorphism shadow-lg">
+  <div className="absolute top-0 right-0 w-96 h-96 bg-primary/10 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
+  <div className="absolute bottom-0 left-0 w-64 h-64 bg-primary/5 rounded-full blur-2xl -ml-20 -mb-20 pointer-events-none" />
+
+  <div className="relative z-10 flex flex-col gap-6 p-6 md:p-12">
+
+    {/* Badge */}
+    <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/20 w-fit text-xs font-bold tracking-wider uppercase" style={{ color: primary }}>
+      <span className="material-symbols-outlined text-sm">play_circle</span>
+      Continue learning
+    </div>
+
+    {/* Heading */}
+    <div>
+      <h3 className="text-2xl md:text-4xl font-bold text-zinc-50 mb-2">
+        Pick up where you left off
+      </h3>
+      <p className="text-zinc-400 text-sm md:text-base max-w-xl">
+        Jump back into your current course and keep the streak alive. You're making great progress!
+      </p>
+    </div>
+
+    {/* Course info row */}
+    <div className="flex flex-col sm:flex-row sm:items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/10">
+      <div className="w-14 h-14 rounded-xl flex items-center justify-center bg-primary/20 shrink-0" style={{ color: primary }}>
+        <span className="material-symbols-outlined text-2xl">model_training</span>
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="text-zinc-50 font-semibold text-base">Transformer Architectures</p>
+        <p className="text-zinc-500 text-sm">Module 3 of 6 · ~45 min remaining</p>
+      </div>
+      <div className="text-right shrink-0">
+        <p className="text-2xl font-bold" style={{ color: primary }}>62%</p>
+        <p className="text-zinc-500 text-xs">Complete</p>
+      </div>
+    </div>
+
+    {/* Progress bar */}
+    <div>
+      <div className="flex justify-between text-xs text-zinc-500 mb-2">
+        <span>Overall progress</span>
+        <span>62% complete</span>
+      </div>
+      <div className="h-2 rounded-full bg-primary/15 overflow-hidden">
+        <div className="h-full w-[62%] rounded-full" style={{ backgroundColor: primary }} />
+      </div>
+    </div>
+
+    {/* Up next */}
+    <div>
+      <p className="text-xs font-bold tracking-wider uppercase text-zinc-500 mb-3">Up next</p>
+      <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide md:flex-wrap">
+        {[
+          { label: "Attention mechanism", done: true },
+          { label: "Self-attention layers", active: true },
+          { label: "Multi-head attention" },
+          { label: "Positional encoding" },
+        ].map((l) => (
+          <div
+            key={l.label}
+            className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs whitespace-nowrap flex-shrink-0 border ${
+              l.active
+                ? "border-primary/40 bg-primary/10 text-zinc-100"
+                : "border-white/5 bg-white/5 text-zinc-500"
+            }`}
+          >
+            <span
+              className="w-2 h-2 rounded-full flex-shrink-0"
+              style={{ backgroundColor: l.done || l.active ? primary : "rgba(255,122,26,0.25)" }}
+            />
+            {l.label}
+            {l.done && (
+              <span className="material-symbols-outlined text-xs" style={{ color: primary }}>check</span>
+            )}
           </div>
-        </div>
-      </section>
+        ))}
+      </div>
+    </div>
+
+    {/* Button row */}
+    <div className="flex flex-col sm:flex-row gap-3">
+      <Link
+        href="/dashboard/learning-path"
+        className="flex items-center justify-center gap-2 text-white px-8 py-3.5 rounded-xl font-semibold w-full sm:w-fit hover:brightness-110 shadow-[0_8px_28px_-4px_rgba(255,122,26,0.55)] text-base"
+        style={{ backgroundColor: primary }}
+      >
+        <span className="material-symbols-outlined">resume</span>
+        Resume Learning
+      </Link>
+      <Link
+        href="/dashboard/courses"
+        className="flex items-center justify-center gap-2 text-zinc-400 px-6 py-3.5 rounded-xl font-medium w-full sm:w-fit border border-white/10 hover:border-white/20 hover:text-zinc-200 transition-all text-sm"
+      >
+        <span className="material-symbols-outlined text-base">grid_view</span>
+        All Courses
+      </Link>
+    </div>
+
+  </div>
+</section>
 
       {/* Quick links */}
       <section className="flex flex-col gap-4">
@@ -117,7 +201,7 @@ export default function DashboardHomePage() {
             { href: "/dashboard/courses", label: "Courses", desc: "Your pathways", icon: "menu_book" },
             { href: "/dashboard/learning-path", label: "Learning Path", desc: "Explore topics", icon: "route" },
             { href: "/dashboard/practice", label: "Practice", desc: "Solve problems", icon: "code" },
-            { href: "/dashboard/ai-chat", label: "AI Chat", desc: "Ask anything", icon: "smart_toy" },
+            { href: "/dashboard/ai-chat", label: "Learn & chat", desc: "Explore ideas & get help", icon: "forum" },
             { href: "/dashboard/projects", label: "Projects", desc: "ML playground", icon: "folder_open" },
             { href: "/dashboard/profile", label: "Profile", desc: "View your stats", icon: "person" },
           ].map((q) => (

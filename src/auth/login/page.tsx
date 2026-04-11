@@ -145,10 +145,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div
-      className="min-h-screen flex overflow-x-hidden overflow-y-auto relative text-slate-900 dark:text-slate-100"
-      style={{ fontFamily: "var(--font-space-grotesk), 'Space Grotesk', sans-serif" }}
-    >
+    <div className="min-h-screen flex overflow-x-hidden overflow-y-auto relative text-slate-900 dark:text-slate-100 font-sans">
       <AuthFlowBackground />
 
       {/* Left column — dark scrim so copy stays readable over shared background */}
@@ -430,6 +427,13 @@ export default function LoginPage() {
               <Link href="/register" className="font-semibold hover:opacity-80" style={{ color: primary }}>
                 Sign up
               </Link>
+            </p>
+            <p className="mt-2 text-center text-xs text-zinc-600">
+              Site admin?{" "}
+              <Link href="/admin/login" className="font-medium text-zinc-400 hover:text-orange-400/90">
+                Admin sign-in
+              </Link>{" "}
+              <span className="text-zinc-600">(different from learner login)</span>
             </p>
           </div>
         </div>

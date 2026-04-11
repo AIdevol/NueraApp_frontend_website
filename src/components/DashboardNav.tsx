@@ -2,7 +2,7 @@
 
 import { getPublicApiUrl } from "@/lib/publicUrl";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { primary } from "@/lib/theme";
@@ -15,6 +15,9 @@ interface NavSection {
 }
 
 const DASHBOARD_PREFIX = "/dashboard";
+const LEARNING_PATH_HREF = `${DASHBOARD_PREFIX}/learning-path`;
+const DSA_HREF = `${DASHBOARD_PREFIX}/dsa`;
+const PRACTICE_PREFIX = `${DASHBOARD_PREFIX}/practice`;
 
 const DEFAULT_NAV_ITEMS: NavSection[] = [
   { href: `${DASHBOARD_PREFIX}`, label: "Dashboard", icon: "grid_view", order: 0 },
@@ -26,7 +29,7 @@ const DEFAULT_NAV_ITEMS: NavSection[] = [
   { href: `${DASHBOARD_PREFIX}/leaderboard`, label: "Leaderboard", icon: "monitoring", order: 7 },
   { href: `${DASHBOARD_PREFIX}/resources`, label: "Resources", icon: "library_books", order: 8 },
   { href: `${DASHBOARD_PREFIX}/community`, label: "Community", icon: "groups", order: 9 },
-  { href: `${DASHBOARD_PREFIX}/ai-chat`, label: "AI Chat", icon: "smart_toy", order: 10 },
+  { href: `${DASHBOARD_PREFIX}/ai-chat`, label: "Learn & chat", icon: "forum", order: 10 },
   { href: `${DASHBOARD_PREFIX}/practice`, label: "Practice Problems", icon: "code", order: 11 },
   { href: `${DASHBOARD_PREFIX}/assignments`, label: "Assignments", icon: "assignment", order: 12 },
   { href: `${DASHBOARD_PREFIX}/quizzes`, label: "Quizzes", icon: "quiz", order: 13 },
@@ -39,8 +42,9 @@ const DEFAULT_NAV_ITEMS: NavSection[] = [
   { href: `${DASHBOARD_PREFIX}/discussions`, label: "Discussions", icon: "forum", order: 20 },
   { href: `${DASHBOARD_PREFIX}/mentorship`, label: "Mentorship", icon: "school", order: 21 },
   { href: `${DASHBOARD_PREFIX}/bookmarks`, label: "Bookmarks", icon: "bookmark", order: 22 },
-  { href: `${DASHBOARD_PREFIX}/notifications`, label: "Notifications", icon: "notifications", order: 23 },
-  { href: `${DASHBOARD_PREFIX}/settings`, label: "Settings", icon: "settings", order: 24 },
+  { href: `${DASHBOARD_PREFIX}/notes`, label: "Notes", icon: "draw", order: 23 },
+  { href: `${DASHBOARD_PREFIX}/notifications`, label: "Notifications", icon: "notifications", order: 24 },
+  { href: `${DASHBOARD_PREFIX}/settings`, label: "Settings", icon: "settings", order: 25 },
 ];
 
 interface DashboardNavProps {
@@ -49,6 +53,7 @@ interface DashboardNavProps {
 
 export function DashboardNav({ collapsed = false }: DashboardNavProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [navItems, setNavItems] = useState<NavSection[]>(DEFAULT_NAV_ITEMS);
 
   useEffect(() => {
@@ -74,9 +79,19 @@ export function DashboardNav({ collapsed = false }: DashboardNavProps) {
   return (
     <nav className="flex flex-col gap-2">
       {navItems.map(({ href, label, icon }) => {
-        const isActive =
+        let isActive =
           pathname === href ||
           (href !== DASHBOARD_PREFIX && pathname.startsWith(href + "/"));
+        if (
+          href === LEARNING_PATH_HREF &&
+          pathname.startsWith(`${DASHBOARD_PREFIX}/content/`) &&
+          Boolean(searchParams.get("topic")?.trim())
+        ) {
+          isActive = true;
+        }
+        if (href === DSA_HREF && pathname.startsWith(PRACTICE_PREFIX)) {
+          isActive = true;
+        }
         return (
           <Link
             key={href}

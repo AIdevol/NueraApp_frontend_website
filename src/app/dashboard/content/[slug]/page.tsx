@@ -13,10 +13,69 @@ function slugToName(slug: string): string {
   return decodeURIComponent(slug).replace(/-/g, " ");
 }
 
+/** Ensures in-document #anchors scroll inside the iframe (sidebar / TOC links). */
+const ANCHOR_SCROLL_SCRIPT = `
+<script>
+(function () {
+  function scrollToId(id) {
+    if (!id) return;
+    var el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+  function setActiveSidebar(href) {
+    var links = document.querySelectorAll(".sidebar a[href^='#'], aside.sidebar a[href^='#']");
+    links.forEach(function (a) {
+      a.classList.toggle("active", a.getAttribute("href") === href);
+    });
+  }
+  document.addEventListener("click", function (e) {
+    var a = e.target && e.target.closest && e.target.closest("a[href]");
+    if (!a) return;
+    var href = (a.getAttribute("href") || "").trim();
+    if (!href) return;
+    if (href === "/" || href.indexOf("//") === 0 || href.indexOf("http:") === 0 || href.indexOf("https:") === 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (href.charAt(0) !== "#") {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (href.length < 2) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    var id = href.slice(1);
+    if (!id || id.indexOf("/") >= 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    scrollToId(decodeURIComponent(id));
+    setActiveSidebar(href);
+    try { history.replaceState(null, "", href); } catch (err) {}
+  }, true);
+  window.addEventListener("hashchange", function () {
+    var id = (location.hash || "").replace(/^#/, "");
+    if (id) {
+      scrollToId(decodeURIComponent(id));
+      setActiveSidebar("#" + id);
+    }
+  });
+  if (location.hash && location.hash.length > 1) {
+    setTimeout(function () {
+      scrollToId(decodeURIComponent(location.hash.slice(1)));
+      setActiveSidebar(location.hash);
+    }, 0);
+  }
+})();
+</script>
+`;
+
 function extractBodyOnly(fullHtml: string): string {
   // Hide only the decorative middle content of backend header (badge + intro paragraph + tags).
-  // We inject CSS into the backend HTML head (string replace) so we don't re-serialize/modify
-  // the DOM structure (which can break rendering for some pages).
+  // Strip standalone-lesson chrome (e.g. MathReference .top-nav) so NeuraApp is the only app shell.
   const style = `
     <style>
       header .badge { display: none !important; }
@@ -24,14 +83,44 @@ function extractBodyOnly(fullHtml: string): string {
       header .header-tags { display: none !important; }
       header { padding-top: 28px !important; padding-bottom: 22px !important; }
       header h1 { margin-bottom: 0 !important; }
+
+      /* Embedded in NeuraApp: hide duplicate full-site nav (MathReference, etc.) */
+      nav.top-nav { display: none !important; }
+      :root {
+        --header-height: 0px !important;
+      }
+      .sidebar {
+        top: 0 !important;
+        height: 100vh !important;
+        max-height: 100vh !important;
+        border-right-color: rgba(255, 124, 42, 0.2) !important;
+      }
+      .right-toc {
+        top: 16px !important;
+      }
+      .page-wrapper {
+        max-width: none !important;
+        margin: 0 !important;
+      }
+      body {
+        overflow-x: hidden !important;
+      }
     </style>
   `;
 
   if (typeof fullHtml !== "string") return fullHtml;
-  if (fullHtml.includes("</head>")) {
-    return fullHtml.replace("</head>", `${style}\n</head>`);
+  let out = fullHtml;
+  if (out.includes("</head>")) {
+    out = out.replace("</head>", `${style}\n</head>`);
   }
-  return fullHtml;
+  if (out.includes("</body>")) {
+    out = out.replace("</body>", `${ANCHOR_SCROLL_SCRIPT}\n</body>`);
+  } else if (out.includes("</html>")) {
+    out = out.replace("</html>", `${ANCHOR_SCROLL_SCRIPT}\n</html>`);
+  } else {
+    out += ANCHOR_SCROLL_SCRIPT;
+  }
+  return out;
 }
 
 export default function ContentReadPage() {
@@ -115,16 +204,15 @@ export default function ContentReadPage() {
         </div>
       </div>
       <article className="w-full rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-900/50 shadow-sm">
+      {/*
+        Fixed viewport height so the iframe has an internal scroll container. Setting height to
+        full document scrollHeight breaks in-document #anchor navigation (sidebar / TOC).
+      */}
       <iframe
         srcDoc={html}
-        sandbox="allow-same-origin"
-        className="w-full border-0 block"
-        style={{ minHeight: "60vh" }}
-        onLoad={(e) => {
-          const iframe = e.currentTarget;
-          const contentHeight = iframe.contentDocument?.documentElement?.scrollHeight;
-          if (contentHeight) iframe.style.height = `${contentHeight}px`;
-        }}
+        sandbox="allow-scripts allow-same-origin"
+        className="w-full border-0 block bg-zinc-950"
+        style={{ height: "min(88vh, 1100px)", minHeight: "65vh" }}
         title={displayTitle}
       />
     </article>

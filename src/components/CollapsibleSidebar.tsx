@@ -1,8 +1,23 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { DashboardNav } from "@/components/DashboardNav";
+
+function NavFallback({ collapsed }: { collapsed: boolean }) {
+  return (
+    <div className="flex flex-col gap-2 animate-pulse" aria-hidden>
+      {Array.from({ length: 8 }).map((_, i) => (
+        <div
+          key={i}
+          className={
+            collapsed ? "h-11 w-11 mx-auto rounded-xl bg-zinc-800/50" : "h-10 rounded-xl bg-zinc-800/50"
+          }
+        />
+      ))}
+    </div>
+  );
+}
 
 const LOGO_SRC = "/logo.png";
 
@@ -58,7 +73,9 @@ export function CollapsibleSidebar() {
         </div>
 
         <div className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-          <DashboardNav collapsed={collapsed} />
+          <Suspense fallback={<NavFallback collapsed={collapsed} />}>
+            <DashboardNav collapsed={collapsed} />
+          </Suspense>
         </div>
       </div>
     </aside>

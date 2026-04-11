@@ -2,6 +2,7 @@ import Link from "next/link";
 import { CollapsibleSidebar } from "@/components/CollapsibleSidebar";
 import { DashboardAuthGuard } from "@/components/DashboardAuthGuard";
 import { DashboardContent } from "@/components/DashboardContent";
+import { DashboardGlobalSearch } from "@/components/DashboardGlobalSearch";
 import { ProfileDropdown } from "@/components/ProfileDropdown";
 
 export default function DashboardLayout({
@@ -11,7 +12,7 @@ export default function DashboardLayout({
 }) {
   return (
     <DashboardAuthGuard>
-    <div className="flex h-screen w-full flex-row overflow-hidden bg-zinc-950 font-[family-name:var(--font-lexend),Lexend,sans-serif] text-zinc-100">
+    <div className="flex h-screen w-full flex-row overflow-hidden bg-zinc-950 font-sans text-zinc-100">
       <CollapsibleSidebar />
       <main className="relative flex-1 flex flex-col min-w-0 min-h-0 h-screen bg-zinc-950 overflow-hidden">
         <div
@@ -23,15 +24,8 @@ export default function DashboardLayout({
           }}
         />
         <header className="relative shrink-0 z-10 border-b border-orange-500/15 bg-black/50 backdrop-blur-xl px-6 py-4 flex items-center justify-between shadow-[0_1px_0_rgba(255,122,26,0.06)]">
-          <div className="flex-1 max-w-md">
-            <label className="relative flex items-center w-full">
-              <span className="material-symbols-outlined absolute left-3 text-orange-400/50 text-lg">search</span>
-              <input
-                type="text"
-                placeholder="Search courses, models, or topics..."
-                className="w-full pl-10 pr-4 py-2.5 rounded-full bg-zinc-900/80 border border-orange-500/15 text-sm focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/30 text-zinc-100 placeholder-zinc-500"
-              />
-            </label>
+          <div className="flex-1 max-w-md min-w-0">
+            <DashboardGlobalSearch />
           </div>
           <div className="flex items-center gap-4">
             <Link

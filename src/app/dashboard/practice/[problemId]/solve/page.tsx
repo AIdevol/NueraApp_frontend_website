@@ -22,9 +22,25 @@ type Language = "python" | "javascript" | "cpp";
 
 type LeftTab = "question" | "solution" | "submissions" | "discuss";
 
-type TestCase = { id: string; label: string; input: string; expected: string };
+type TestCaseField = { name: string; value: string };
+
+type TestCase = {
+  id: string;
+  label: string;
+  /** Named parameters (e.g. nums, target) shown as labeled inputs */
+  fields: TestCaseField[];
+  expected: string;
+};
+
+type BottomIdeTab = "testcase" | "result";
 
 type SubmissionRow = { at: string; lang: Language; note: string };
+
+/** Fixes legacy or hand-edited boilerplate that breaks Python (e.g. stray comma before `->`). */
+function sanitizeStoredCode(raw: string, lang: Language): string {
+  if (lang !== "python") return raw;
+  return raw.replace(/def\s+solve\s*\(\s*self\s*,\s*->/g, "def solve(self) ->");
+}
 
 function defaultTemplate(lang: Language, title: string) {
   if (lang === "python") {
@@ -59,22 +75,67 @@ function difficultyStyle(difficulty: string) {
   };
 }
 
-function mockCasesFor(problem: PracticeProblem): TestCase[] {
-  const topic = problem.topic || "Problem";
+function mockCasesFor(_problem: PracticeProblem): TestCase[] {
   return [
     {
       id: "1",
       label: "Case 1",
-      input: `${topic} — sample input A\n(Replace with real I/O when judge is connected.)`,
-      expected: "Expected output A",
+      fields: [
+        { name: "nums", value: "[2, 7, 11, 15]" },
+        { name: "target", value: "9" },
+      ],
+      expected: "[0, 1]",
     },
     {
       id: "2",
       label: "Case 2",
-      input: `${topic} — sample input B\n(Edge case placeholder.)`,
-      expected: "Expected output B",
+      fields: [
+        { name: "nums", value: "[3, 2, 4]" },
+        { name: "target", value: "6" },
+      ],
+      expected: "[1, 2]",
+    },
+    {
+      id: "3",
+      label: "Case 3",
+      fields: [
+        { name: "nums", value: "[3, 3]" },
+        { name: "target", value: "6" },
+      ],
+      expected: "[0, 1]",
     },
   ];
+}
+
+function casesStorageKey(problemId: string) {
+  return `practice:testcases:${problemId}`;
+}
+
+function migrateLegacyCase(raw: unknown): TestCase | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.id !== "string" || typeof o.label !== "string") return null;
+  if (Array.isArray(o.fields) && o.fields.length) {
+    const fields = (o.fields as TestCaseField[]).filter(
+      (f) => f && typeof f.name === "string" && typeof f.value === "string"
+    );
+    if (!fields.length) return null;
+    return {
+      id: o.id,
+      label: o.label,
+      fields,
+      expected: typeof o.expected === "string" ? o.expected : "",
+    };
+  }
+  if (typeof o.input === "string") {
+    return {
+      id: o.id,
+      label: o.label,
+      fields: [{ name: "input", value: o.input }],
+      expected: typeof o.expected === "string" ? o.expected : "",
+    };
+  }
+  return null;
 }
 
 function tabButtonClass(active: boolean) {
@@ -91,10 +152,20 @@ function escapeHtml(s: string): string {
 }
 
 function highlightCode(code: string, lang: Language): string {
+  const tripleTokens: string[] = [];
+  let prepped = code;
+  if (lang === "python") {
+    prepped = prepped.replace(/("""[\s\S]*?"""|'''[\s\S]*?''')/g, (m) => {
+      const idx = tripleTokens.length;
+      tripleTokens.push(m);
+      return `__PYTRIP${idx}__`;
+    });
+  }
+
   const tokens: string[] = [];
   const save = (html: string) => `@@TOK${tokens.push(html) - 1}@@`;
 
-  let out = escapeHtml(code);
+  let out = escapeHtml(prepped);
   const commentRe = lang === "python" ? /(#.*)$/gm : /(\/\/.*)$/gm;
   out = out
     .replace(commentRe, (m) => save(`<span style="color:#6b7280;font-style:italic">${m}</span>`))
@@ -108,7 +179,14 @@ function highlightCode(code: string, lang: Language): string {
     )
     .replace(/\b(\d+\.?\d*)\b/g, '<span style="color:#f78c6c">$1</span>');
 
-  return out.replace(/@@TOK(\d+)@@/g, (_, i) => tokens[Number(i)] ?? "");
+  out = out.replace(/@@TOK(\d+)@@/g, (_, i) => tokens[Number(i)] ?? "");
+  if (lang === "python") {
+    out = out.replace(/__PYTRIP(\d+)__/g, (_, i) => {
+      const raw = tripleTokens[Number(i)] ?? "";
+      return `<span style="color:#c3e88d">${escapeHtml(raw)}</span>`;
+    });
+  }
+  return out;
 }
 
 export default function PracticeSolvePage() {
@@ -128,12 +206,27 @@ export default function PracticeSolvePage() {
   const [code, setCode] = useState("");
   const [leftTab, setLeftTab] = useState<LeftTab>("question");
   const [activeCaseIdx, setActiveCaseIdx] = useState(0);
-  const [consoleLines, setConsoleLines] = useState<string[]>([">> Ready. Run executes a local dry-run; Submit saves your code."]);
+  const [ideBottomTab, setIdeBottomTab] = useState<BottomIdeTab>("testcase");
+  const [testCasesState, setTestCasesState] = useState<TestCase[]>([]);
+  const [leftWidthPct, setLeftWidthPct] = useState(40);
+  const [editorFrac, setEditorFrac] = useState(0.58);
+  const [showTestcaseSource, setShowTestcaseSource] = useState(false);
+  const [consoleLines, setConsoleLines] = useState<string[]>([
+    ">> Ready. Run checks syntax (and C++/Python via API when available). No code execution or hidden tests until a judge is connected.",
+  ]);
   const [caseStatus, setCaseStatus] = useState<Record<string, "idle" | "pass" | "fail">>({});
+  const [runBusy, setRunBusy] = useState(false);
   const [solved, setSolved] = useState(false);
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
   const codeTextareaRef = useRef<HTMLTextAreaElement>(null);
   const codeHighlightRef = useRef<HTMLPreElement>(null);
+  const mainRowRef = useRef<HTMLDivElement>(null);
+  const rightColRef = useRef<HTMLDivElement>(null);
+  const hDragRef = useRef<{ startX: number; startPct: number; w: number } | null>(null);
+  const vDragRef = useRef<{ startY: number; startFrac: number; h: number } | null>(null);
+  const splitPersistRef = useRef({ left: 40, editor: 0.58 });
+  const pendingActiveCaseIdx = useRef<number | null>(null);
+  const [isWideLayout, setIsWideLayout] = useState(false);
 
   const appendConsole = useCallback((lines: string[]) => {
     setConsoleLines((prev) => [...prev, ...lines]);
@@ -186,8 +279,15 @@ export default function PracticeSolvePage() {
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as { lang?: Language; code?: string };
-        if (parsed.lang) setLang(parsed.lang);
-        if (parsed.code != null) setCode(parsed.code);
+        const nextLang = (parsed.lang ?? "python") as Language;
+        if (parsed.lang) setLang(nextLang);
+        if (parsed.code != null) {
+          const fixed = sanitizeStoredCode(parsed.code, nextLang);
+          setCode(fixed);
+          if (fixed !== parsed.code) {
+            localStorage.setItem(storageKey, JSON.stringify({ lang: nextLang, code: fixed }));
+          }
+        }
         return;
       } catch {
         // ignore
@@ -202,7 +302,173 @@ export default function PracticeSolvePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [problem, lang]);
 
-  const testCases = useMemo(() => (problem ? mockCasesFor(problem) : []), [problem]);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(min-width: 1024px)");
+    const apply = () => setIsWideLayout(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !problemId) return;
+    try {
+      const raw = localStorage.getItem(`practice:ideSplit:${problemId}`);
+      if (raw) {
+        const j = JSON.parse(raw) as { left?: number; editor?: number };
+        if (typeof j.left === "number" && j.left >= 22 && j.left <= 58) setLeftWidthPct(j.left);
+        if (typeof j.editor === "number" && j.editor >= 0.28 && j.editor <= 0.82) setEditorFrac(j.editor);
+      }
+    } catch {
+      // ignore
+    }
+  }, [problemId]);
+
+  useEffect(() => {
+    splitPersistRef.current = { left: leftWidthPct, editor: editorFrac };
+  }, [leftWidthPct, editorFrac]);
+
+  useEffect(() => {
+    if (!problem) return;
+    if (typeof window === "undefined" || !problemId) return;
+    try {
+      const raw = localStorage.getItem(casesStorageKey(problemId));
+      if (raw) {
+        const arr = JSON.parse(raw) as unknown[];
+        if (Array.isArray(arr) && arr.length) {
+          const migrated = arr.map(migrateLegacyCase).filter((c): c is TestCase => c != null);
+          if (migrated.length) {
+            setTestCasesState(migrated);
+            setActiveCaseIdx(0);
+            return;
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+    setTestCasesState(mockCasesFor(problem));
+    setActiveCaseIdx(0);
+  }, [problem, problemId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !problemId || testCasesState.length === 0) return;
+    try {
+      localStorage.setItem(casesStorageKey(problemId), JSON.stringify(testCasesState));
+    } catch {
+      // ignore
+    }
+  }, [problemId, testCasesState]);
+
+  useEffect(() => {
+    if (pendingActiveCaseIdx.current == null) return;
+    const i = pendingActiveCaseIdx.current;
+    pendingActiveCaseIdx.current = null;
+    setActiveCaseIdx(i);
+  }, [testCasesState]);
+
+  useEffect(() => {
+    function onMove(e: PointerEvent) {
+      if (hDragRef.current && mainRowRef.current) {
+        const { startX, startPct, w } = hDragRef.current;
+        const dx = e.clientX - startX;
+        const deltaPct = (dx / w) * 100;
+        setLeftWidthPct(() => Math.min(58, Math.max(22, startPct + deltaPct)));
+      }
+      if (vDragRef.current && rightColRef.current) {
+        const { startY, startFrac, h } = vDragRef.current;
+        const dy = e.clientY - startY;
+        const deltaFrac = h > 0 ? dy / h : 0;
+        setEditorFrac(() => Math.min(0.82, Math.max(0.22, startFrac + deltaFrac)));
+      }
+    }
+    function onUp() {
+      if (hDragRef.current || vDragRef.current) {
+        try {
+          const { left, editor } = splitPersistRef.current;
+          if (problemId) {
+            localStorage.setItem(`practice:ideSplit:${problemId}`, JSON.stringify({ left, editor }));
+          }
+        } catch {
+          // ignore
+        }
+      }
+      hDragRef.current = null;
+      vDragRef.current = null;
+    }
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [problemId]);
+
+  function beginHResize(e: React.PointerEvent<HTMLDivElement>) {
+    const row = mainRowRef.current;
+    if (!row) return;
+    e.preventDefault();
+    hDragRef.current = { startX: e.clientX, startPct: leftWidthPct, w: row.offsetWidth };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function beginVResize(e: React.PointerEvent<HTMLDivElement>) {
+    const col = rightColRef.current;
+    if (!col) return;
+    e.preventDefault();
+    vDragRef.current = { startY: e.clientY, startFrac: editorFrac, h: col.clientHeight };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+
+  function addTestCase() {
+    setTestCasesState((prev) => {
+      const n = prev.length + 1;
+      const template = prev[prev.length - 1]?.fields?.length
+        ? prev[prev.length - 1]!.fields.map((f) => ({ name: f.name, value: "" }))
+        : [{ name: "input", value: "" }];
+      const id =
+        typeof crypto !== "undefined" && "randomUUID" in crypto
+          ? crypto.randomUUID()
+          : `case-${Date.now()}`;
+      const next: TestCase[] = [...prev, { id, label: `Case ${n}`, fields: template, expected: "" }];
+      pendingActiveCaseIdx.current = next.length - 1;
+      return next;
+    });
+  }
+
+  function setCaseField(caseId: string, fieldIndex: number, value: string) {
+    setTestCasesState((prev) =>
+      prev.map((c) =>
+        c.id !== caseId
+          ? c
+          : {
+              ...c,
+              fields: c.fields.map((f, j) => (j === fieldIndex ? { ...f, value } : f)),
+            }
+      )
+    );
+  }
+
+  function setCaseExpected(caseId: string, expected: string) {
+    setTestCasesState((prev) => prev.map((c) => (c.id === caseId ? { ...c, expected } : c)));
+  }
+
+  function removeTestCase(idx: number) {
+    setTestCasesState((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((_, i) => i !== idx);
+    });
+    setActiveCaseIdx((i) => {
+      if (idx < i) return i - 1;
+      if (idx === i) return Math.max(0, i - 1);
+      return i;
+    });
+  }
+
+  const activeCase = testCasesState[activeCaseIdx] ?? testCasesState[0];
 
   function persist(next: { lang: Language; code: string }) {
     if (typeof window === "undefined") return;
@@ -235,17 +501,71 @@ export default function PracticeSolvePage() {
     appendConsole([">> Reset to template."]);
   }
 
-  function runCode() {
-    appendConsole([">> Running dry-run…", ">> No remote judge is configured yet. Test tabs are placeholders."]);
-    const next: Record<string, "idle" | "pass" | "fail"> = {};
-    for (const c of testCases) next[c.id] = "fail";
-    setCaseStatus(next);
-    appendConsole([
-      "Error",
-      "TypeError: execution backend not connected (0 judges available).",
-      "Tip: wire your API to a sandbox runner to enable real tests.",
-    ]);
-  }
+  const runCode = useCallback(async () => {
+    if (runBusy) return;
+    setRunBusy(true);
+    setIdeBottomTab("result");
+    appendConsole([">> Local Run — syntax / parse check only (no program execution, no I/O tests)."]);
+
+    const idleCases: Record<string, "idle" | "pass" | "fail"> = {};
+    for (const c of testCasesState) idleCases[c.id] = "idle";
+
+    const failAll = () => {
+      const f: Record<string, "idle" | "pass" | "fail"> = {};
+      for (const c of testCasesState) f[c.id] = "fail";
+      setCaseStatus(f);
+    };
+
+    try {
+      if (lang === "javascript") {
+        try {
+          // eslint-disable-next-line no-new-func
+          new Function(code);
+          appendConsole([">> JavaScript: parse OK.", ">> Hidden tests stay disabled until a judge is wired to the API."]);
+          setCaseStatus(idleCases);
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          appendConsole([`>> JavaScript parse error: ${msg}`]);
+          failAll();
+        }
+        return;
+      }
+
+      const api = getPublicApiUrl();
+      const res = await fetch(`${api}/api/v1/practice-problems/syntax-check`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language: lang, code }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { ok?: boolean; detail?: string };
+      if (!res.ok) {
+        appendConsole([
+          `>> Syntax API error (${res.status}): ${(data as { detail?: string }).detail || res.statusText}`,
+          ">> Is the NeuraApp backend running? You can still edit and Submit to save locally.",
+        ]);
+        setCaseStatus(idleCases);
+        return;
+      }
+      if (data.ok) {
+        appendConsole([
+          `>> ${data.detail || "OK"}`,
+          ">> Full grading and sample I/O require a connected judge — not executed here.",
+        ]);
+        setCaseStatus(idleCases);
+      } else {
+        appendConsole([`>> ${data.detail || "Syntax check failed."}`]);
+        failAll();
+      }
+    } catch {
+      appendConsole([
+        ">> Could not reach the API (network or CORS). For JavaScript, parse runs in the browser; Python/C++ need the backend.",
+        ">> Start the API server or check NEXT_PUBLIC_API_URL.",
+      ]);
+      setCaseStatus(idleCases);
+    } finally {
+      setRunBusy(false);
+    }
+  }, [appendConsole, code, lang, runBusy, testCasesState]);
 
   function submitCode() {
     const row: SubmissionRow = {
@@ -266,7 +586,7 @@ export default function PracticeSolvePage() {
   const diff = problem ? difficultyStyle(problem.difficulty) : difficultyStyle("Easy");
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 min-w-0 w-full bg-background-dark border border-zinc-800 rounded-lg overflow-hidden">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-background-dark p-4">
       {/* Top chrome */}
       <div className="shrink-0 flex items-center gap-3 px-3 py-2 border-b border-zinc-800 bg-[#0c0c0f]">
         <button
@@ -307,10 +627,32 @@ export default function PracticeSolvePage() {
           <p className="text-zinc-300 font-semibold">Problem not found.</p>
         </div>
       ) : (
-        <div className="flex flex-1 min-h-0 flex-col lg:flex-row">
-          {/* Left: problem workspace */}
-          <section className="flex flex-col min-h-[42vh] lg:min-h-0 lg:w-[46%] lg:max-w-[560px] shrink-0 border-b lg:border-b-0 lg:border-r border-zinc-800 bg-[#0c0c0f]">
-            <div className="flex border-b border-zinc-800 px-3 pt-1.5 gap-2 overflow-x-auto">
+        <div
+          ref={mainRowRef}
+          className="flex flex-1 min-h-0 flex-col overflow-hidden lg:flex-row"
+        >
+          {/* Left: question / problem workspace (width adjustable on desktop) */}
+          <section
+            className="flex min-h-0 flex-col overflow-hidden border-b border-zinc-800 bg-[#0c0c0f] lg:min-h-0 lg:border-b-0 lg:border-r"
+            style={
+              isWideLayout
+                ? {
+                    flexGrow: 0,
+                    flexShrink: 0,
+                    flexBasis: `${leftWidthPct}%`,
+                    minWidth: 260,
+                    maxWidth: "58%",
+                    minHeight: 0,
+                  }
+                : {
+                    width: "100%",
+                    minHeight: "min(36dvh, 320px)",
+                    maxHeight: "46dvh",
+                    flexShrink: 0,
+                  }
+            }
+          >
+            <div className="flex shrink-0 border-b border-zinc-800 px-3 pt-1.5 gap-2 overflow-x-auto">
               {(["question", "solution", "submissions", "discuss"] as const).map((tab) => (
                 <button
                   key={tab}
@@ -323,7 +665,7 @@ export default function PracticeSolvePage() {
               ))}
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto p-5 md:p-6">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain p-5 md:p-6 [scrollbar-gutter:stable]">
               {leftTab === "question" && (
                 <>
                   <h1 className="text-lg font-bold tracking-tight text-zinc-50 leading-snug">
@@ -456,9 +798,21 @@ export default function PracticeSolvePage() {
             </div>
           </section>
 
-          {/* Right: editor + console */}
-          <section className="flex flex-1 min-h-0 min-w-0 flex-col bg-zinc-950">
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 border-b border-zinc-800 bg-black">
+          {isWideLayout && (
+            <div
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Drag to resize question and editor panels"
+              onPointerDown={beginHResize}
+              className="group hidden w-2 shrink-0 cursor-col-resize flex-col items-center justify-center border-x border-zinc-800 bg-[#121214] hover:bg-orange-500/5 lg:flex"
+            >
+              <div className="pointer-events-none my-auto h-12 w-1 rounded-full bg-zinc-600 transition-colors group-hover:bg-orange-500/80 group-active:bg-orange-400" />
+            </div>
+          )}
+
+          {/* Right: editor + testcase / results (vertical split adjustable) */}
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 border-b border-zinc-800 bg-black">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="material-symbols-outlined text-orange-400 text-lg shrink-0">code</span>
                 <span className="text-sm font-semibold text-zinc-200 truncate px-2.5 py-1 rounded-lg bg-zinc-800/80 border border-zinc-700">
@@ -474,7 +828,7 @@ export default function PracticeSolvePage() {
                   <option value="cpp">C++</option>
                 </select>
               </div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex flex-wrap items-center justify-end gap-2">
                 <button
                   type="button"
                   onClick={resetTemplate}
@@ -483,98 +837,245 @@ export default function PracticeSolvePage() {
                   <span className="material-symbols-outlined text-base">restart_alt</span>
                   Reset
                 </button>
+                <button
+                  type="button"
+                  onClick={runCode}
+                  disabled={runBusy}
+                  className="inline-flex items-center gap-1.5 h-8 px-4 rounded-lg border border-zinc-600 text-xs font-bold text-zinc-100 transition-colors hover:bg-zinc-700 hover:border-zinc-500 disabled:pointer-events-none disabled:opacity-45"
+                >
+                  <span className={`material-symbols-outlined text-base ${runBusy ? "animate-pulse" : ""}`}>
+                    play_arrow
+                  </span>
+                  {runBusy ? "Checking…" : "Run"}
+                </button>
+                <button
+                  type="button"
+                  onClick={submitCode}
+                  className="inline-flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-bold text-white shadow-[0_4px_16px_-2px_rgba(255,122,26,0.5)] hover:brightness-110 transition-all"
+                  style={{ backgroundColor: primary }}
+                >
+                  <span className="material-symbols-outlined text-base">cloud_upload</span>
+                  Submit
+                </button>
               </div>
             </div>
 
-            <div className="flex-1 min-h-0 grid grid-rows-[minmax(220px,1fr)_minmax(140px,38%)]">
-              <div className="min-h-0 border-b border-zinc-800">
-                <div className="relative w-full h-full min-h-0">
-                  <pre
-                    ref={codeHighlightRef}
-                    aria-hidden="true"
-                    className="absolute inset-0 w-full h-full min-h-0 overflow-auto font-mono text-[13px] leading-relaxed bg-zinc-950 text-zinc-100 p-4 pointer-events-none whitespace-pre"
-                    dangerouslySetInnerHTML={{ __html: highlightCode(code, lang) }}
-                  />
-                  <textarea
-                    ref={codeTextareaRef}
-                    value={code}
-                    onChange={(e) => onChangeCode(e.target.value)}
-                    onScroll={onCodeScroll}
-                    spellCheck={false}
-                    className="absolute inset-0 w-full h-full min-h-0 resize-none font-mono text-[13px] leading-relaxed bg-transparent text-transparent caret-orange-300 p-4 outline-none selection:bg-primary/30"
-                    aria-label="Code editor"
-                  />
-                </div>
-              </div>
+            <div ref={rightColRef} className="flex min-h-0 flex-1 flex-col">
+              {(() => {
+                const editorGrow = Math.max(22, Math.min(78, Math.round(editorFrac * 100)));
+                const bottomGrow = 100 - editorGrow;
+                return (
+                  <>
+                    <div
+                      className="flex min-h-0 flex-col border-b border-zinc-800"
+                      style={{
+                        flexGrow: editorGrow,
+                        flexShrink: 1,
+                        flexBasis: 0,
+                        minHeight: 160,
+                      }}
+                    >
+                      <div className="relative min-h-0 w-full flex-1">
+                        <pre
+                          ref={codeHighlightRef}
+                          aria-hidden="true"
+                          className="absolute inset-0 min-h-0 w-full overflow-auto whitespace-pre p-4 font-mono text-[13px] leading-relaxed text-zinc-100 bg-zinc-950 pointer-events-none"
+                          dangerouslySetInnerHTML={{ __html: highlightCode(code, lang) }}
+                        />
+                        <textarea
+                          ref={codeTextareaRef}
+                          value={code}
+                          onChange={(e) => onChangeCode(e.target.value)}
+                          onScroll={onCodeScroll}
+                          spellCheck={false}
+                          className="absolute inset-0 min-h-0 w-full resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed text-transparent caret-orange-300 outline-none selection:bg-primary/30"
+                          aria-label="Code editor"
+                        />
+                      </div>
+                    </div>
 
-              <div className="flex flex-col min-h-0 bg-black">
-                <div className="shrink-0 flex items-center justify-between gap-2 px-2 border-b border-zinc-800">
-                  <div className="flex items-center gap-1 overflow-x-auto py-1">
-                    {testCases.map((c, idx) => {
-                      const st = caseStatus[c.id];
-                      return (
+                    <div
+                      role="separator"
+                      aria-orientation="horizontal"
+                      aria-label="Drag to resize editor and testcase panel"
+                      onPointerDown={beginVResize}
+                      className="group flex h-2 shrink-0 cursor-row-resize items-center justify-center border-y border-zinc-800 bg-[#121214] hover:bg-orange-500/5"
+                    >
+                      <div className="pointer-events-none h-1 w-12 rounded-full bg-zinc-600 transition-colors group-hover:bg-orange-500/80 group-active:bg-orange-400" />
+                    </div>
+
+                    <div
+                      className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-t-lg border border-zinc-800 bg-[#161618]"
+                      style={{
+                        flexGrow: bottomGrow,
+                        flexShrink: 1,
+                        flexBasis: 0,
+                        minHeight: 120,
+                      }}
+                    >
+                      <div className="flex shrink-0 items-stretch gap-0 border-b border-zinc-800 px-1 pt-1.5 text-[13px] font-semibold">
                         <button
-                          key={c.id}
                           type="button"
-                          onClick={() => setActiveCaseIdx(idx)}
+                          onClick={() => setIdeBottomTab("testcase")}
                           className={[
-                            "inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold whitespace-nowrap",
-                            activeCaseIdx === idx ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-200",
+                            "inline-flex items-center gap-1.5 rounded-t-md px-3 py-2 transition-colors",
+                            ideBottomTab === "testcase"
+                              ? "bg-zinc-800/90 text-zinc-100"
+                              : "text-zinc-500 hover:text-zinc-300",
                           ].join(" ")}
                         >
-                          {c.label}
-                          {st === "pass" && <span className="text-emerald-400 material-symbols-outlined text-sm">check</span>}
-                          {st === "fail" && <span className="text-red-400 material-symbols-outlined text-sm">close</span>}
+                          <span className="material-symbols-outlined text-base text-emerald-400">check_circle</span>
+                          Testcase
                         </button>
-                      );
-                    })}
-                  </div>
-                  <div className="flex items-center gap-3 shrink-0 pr-2 py-1">
-                    <button
-                      type="button"
-                      onClick={runCode}
-                      className="inline-flex items-center gap-1.5 h-9 px-4 rounded-lg border border-zinc-600 text-sm font-bold text-zinc-100 hover:bg-zinc-700 hover:border-zinc-500 transition-colors"
-                    >
-                      <span className="material-symbols-outlined text-base">play_arrow</span>
-                      Run
-                    </button>
-                    <button
-                      type="button"
-                      onClick={submitCode}
-                      className="inline-flex items-center gap-1.5 h-9 px-5 rounded-lg text-sm font-bold text-white shadow-[0_4px_16px_-2px_rgba(255,122,26,0.5)] hover:brightness-110 transition-all"
-                      style={{ backgroundColor: primary }}
-                    >
-                      <span className="material-symbols-outlined text-base">cloud_upload</span>
-                      Submit
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1 min-h-0 grid grid-cols-1 sm:grid-cols-2 gap-px bg-zinc-800">
-                  <div className="bg-black p-3 min-h-0 overflow-y-auto">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Input</p>
-                    <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap">{testCases[activeCaseIdx]?.input}</pre>
-                  </div>
-                  <div className="bg-black p-3 min-h-0 overflow-y-auto">
-                    <p className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">Expected</p>
-                    <pre className="text-xs font-mono text-zinc-300 whitespace-pre-wrap">{testCases[activeCaseIdx]?.expected}</pre>
-                  </div>
-                </div>
-
-                <div className="shrink-0 max-h-[min(200px,28vh)] overflow-y-auto border-t border-zinc-800 p-3 font-mono text-[11px] leading-relaxed">
-                  {consoleLines.map((line, i) => {
-                    const isErr = line.startsWith("Error") || line.startsWith("TypeError");
-                    return (
-                      <div
-                        key={`${i}-${line.slice(0, 24)}`}
-                        className={isErr ? "text-red-400" : "text-zinc-500"}
-                      >
-                        {line}
+                        <span className="self-center text-zinc-600 select-none" aria-hidden>
+                          |
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setIdeBottomTab("result")}
+                          className={[
+                            "inline-flex items-center gap-1.5 rounded-t-md px-3 py-2 transition-colors",
+                            ideBottomTab === "result"
+                              ? "bg-zinc-800/90 text-zinc-100"
+                              : "text-zinc-500 hover:text-zinc-300",
+                          ].join(" ")}
+                        >
+                          <span className="material-symbols-outlined text-base text-zinc-400">terminal</span>
+                          Test Result
+                        </button>
                       </div>
-                    );
-                  })}
-                </div>
-              </div>
+
+                      {ideBottomTab === "testcase" && (
+                        <>
+                          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto border-b border-zinc-800 px-2 py-2">
+                            {testCasesState.map((c, idx) => {
+                              const st = caseStatus[c.id];
+                              return (
+                                <div key={c.id} className="flex items-center gap-0.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setActiveCaseIdx(idx)}
+                                    className={[
+                                      "inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors",
+                                      activeCaseIdx === idx
+                                        ? "bg-zinc-700 text-zinc-50"
+                                        : "text-zinc-500 hover:bg-zinc-800/80 hover:text-zinc-200",
+                                    ].join(" ")}
+                                  >
+                                    {c.label}
+                                    {st === "pass" && (
+                                      <span className="material-symbols-outlined text-sm text-emerald-400">check</span>
+                                    )}
+                                    {st === "fail" && (
+                                      <span className="material-symbols-outlined text-sm text-red-400">close</span>
+                                    )}
+                                  </button>
+                                  {testCasesState.length > 1 && (
+                                    <button
+                                      type="button"
+                                      aria-label={`Remove ${c.label}`}
+                                      onClick={() => removeTestCase(idx)}
+                                      className="rounded p-0.5 text-zinc-600 hover:bg-zinc-800 hover:text-zinc-300"
+                                    >
+                                      <span className="material-symbols-outlined text-sm">close</span>
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
+                            <button
+                              type="button"
+                              onClick={addTestCase}
+                              className="ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-dashed border-zinc-600 text-zinc-400 hover:border-orange-500/50 hover:bg-zinc-800 hover:text-orange-300"
+                              aria-label="Add test case"
+                            >
+                              <span className="material-symbols-outlined text-lg">add</span>
+                            </button>
+                          </div>
+
+                          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3">
+                            {activeCase ? (
+                              showTestcaseSource ? (
+                                <textarea
+                                  value={JSON.stringify(activeCase, null, 2)}
+                                  readOnly
+                                  className="h-full min-h-[160px] w-full resize-y rounded-lg border border-zinc-700 bg-black/50 p-3 font-mono text-[12px] text-zinc-300"
+                                />
+                              ) : (
+                                <div className="space-y-4">
+                                  {activeCase.fields.map((field, fi) => (
+                                    <div key={`${activeCase.id}-${field.name}-${fi}`}>
+                                      <label className="mb-1.5 block text-[11px] font-medium tracking-wide text-zinc-500">
+                                        {field.name} =
+                                      </label>
+                                      <input
+                                        type="text"
+                                        value={field.value}
+                                        onChange={(e) => setCaseField(activeCase.id, fi, e.target.value)}
+                                        spellCheck={false}
+                                        className="w-full rounded-lg border border-zinc-700 bg-[#1e1e22] px-3 py-2.5 font-mono text-[13px] text-zinc-100 outline-none ring-orange-500/0 transition-shadow focus:border-orange-500/40 focus:ring-2 focus:ring-orange-500/20"
+                                      />
+                                    </div>
+                                  ))}
+                                  <div>
+                                    <label className="mb-1.5 block text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+                                      Expected
+                                    </label>
+                                    <textarea
+                                      value={activeCase.expected}
+                                      onChange={(e) => setCaseExpected(activeCase.id, e.target.value)}
+                                      spellCheck={false}
+                                      rows={3}
+                                      className="w-full resize-y rounded-lg border border-zinc-700 bg-[#1e1e22] px-3 py-2.5 font-mono text-[13px] text-zinc-100 outline-none focus:border-orange-500/40 focus:ring-2 focus:ring-orange-500/20"
+                                    />
+                                  </div>
+                                </div>
+                              )
+                            ) : (
+                              <p className="text-sm text-zinc-500">No test cases.</p>
+                            )}
+                          </div>
+                        </>
+                      )}
+
+                      {ideBottomTab === "result" && (
+                        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 font-mono text-[11px] leading-relaxed text-zinc-400">
+                          {consoleLines.map((line, i) => {
+                            const isErr = line.startsWith("Error") || line.startsWith("TypeError");
+                            return (
+                              <div
+                                key={`${i}-${line.slice(0, 24)}`}
+                                className={isErr ? "text-red-400" : "text-zinc-500"}
+                              >
+                                {line}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex shrink-0 items-center justify-between gap-2 border-t border-zinc-800 bg-[#121214] px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => setShowTestcaseSource((v) => !v)}
+                          className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-400 hover:text-orange-400"
+                        >
+                          <span className="material-symbols-outlined text-base">code</span>
+                          {showTestcaseSource ? "Form view" : "Source"}
+                        </button>
+                        <button
+                          type="button"
+                          title="Test cases are saved in this browser per problem. Connect a judge to run against your inputs."
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700 text-zinc-500 hover:border-zinc-600 hover:text-zinc-300"
+                          aria-label="Help"
+                        >
+                          <span className="material-symbols-outlined text-base">help</span>
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </section>
         </div>

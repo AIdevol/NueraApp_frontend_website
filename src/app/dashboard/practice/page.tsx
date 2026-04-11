@@ -39,22 +39,36 @@ export default function PracticePage() {
       setError("");
       try {
         const api = getPublicApiUrl();
+
         const [libRes, customRes] = await Promise.all([
           fetch(`${api}/api/v1/problem-library/dsa`),
           fetch(`${api}/api/v1/practice-problems`),
         ]);
 
-        const libJson = await libRes.json().catch(() => ({}));
-        const customJson = await customRes.json().catch(() => ({}));
+        const libJson = (await libRes.json().catch(() => ({}))) as { problems?: PracticeProblem[]; detail?: string };
+        const customJson = (await customRes.json().catch(() => ({}))) as { problems?: PracticeProblem[]; detail?: string };
 
-        if (!libRes.ok || !customRes.ok) {
-          setError((libJson as any).detail || (customJson as any).detail || "Failed to load problems");
-          return;
+        const customProblems = customRes.ok ? (customJson.problems ?? []) : [];
+        const libProblems = libRes.ok ? (libJson.problems ?? []) : [];
+
+        // Custom / cohort problems first, then built-in library
+        const merged = [...customProblems, ...libProblems];
+        setProblems(merged);
+
+        const parts: string[] = [];
+        if (!customRes.ok) {
+          parts.push(
+            customJson.detail || `Custom problems unavailable (${customRes.status}). Is the API running?`
+          );
         }
-
-        const libProblems = (libJson as any).problems ?? [];
-        const customProblems = (customJson as any).problems ?? [];
-        setProblems([...customProblems, ...libProblems]);
+        if (!libRes.ok) {
+          parts.push(libJson.detail || `Built-in library unavailable (${libRes.status}).`);
+        }
+        if (merged.length === 0) {
+          setError(parts.join(" ") || "No problems to display.");
+        } else {
+          setError("");
+        }
       } catch {
         setError("Connection error.");
       } finally {
@@ -68,7 +82,12 @@ export default function PracticePage() {
     <div className="min-h-full flex flex-col bg-background-dark rounded-xl p-4 md:p-5 border border-orange-500/10">
       <div className="mb-8 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-50">
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-50 flex items-center gap-2">
+            {/* <span className="material-symbols-outlined text-lg">code</span> */}
+            <Link href="/dashboard/dsa" className="inline-flex items-center gap-1 h-8 px-3 rounded-lg text-sm font-bold border border-orange-500/25 hover:bg-orange-500/10 transition-colors shrink-0" style={{ color: primary }}>
+              <span className="material-symbols-outlined text-lg">arrow_back</span>
+              Back
+            </Link>
             Practice Problems
           </h1>
           <p className="mt-1 text-zinc-400 text-sm max-w-2xl">
