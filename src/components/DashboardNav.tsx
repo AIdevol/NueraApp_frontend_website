@@ -5,8 +5,6 @@ import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 
-import { primary } from "@/lib/theme";
-
 interface NavSection {
   href: string;
   label: string;
@@ -98,17 +96,38 @@ export function DashboardNav({ collapsed = false }: DashboardNavProps) {
             href={href}
             title={collapsed ? label : undefined}
             aria-label={label}
+            aria-current={isActive ? "page" : undefined}
             className={`group relative flex items-center rounded-xl transition-all duration-200 ${
-              collapsed ? "justify-center w-11 h-11 mx-auto" : "gap-2.5 px-2.5 py-2.5"
+              collapsed ? "justify-center w-11 h-11 mx-auto" : "gap-2.5 px-3 py-2.5"
             } ${
               isActive
-                ? "bg-orange-500/12 border border-orange-500/25 shadow-[0_0_20px_-4px_rgba(255,122,26,0.35)]"
-                : "text-zinc-500 hover:bg-zinc-900/80 hover:text-zinc-100 border border-transparent"
+                ? `bg-linear-to-r from-orange-500/20 via-orange-500/10 to-transparent text-zinc-50 ${
+                    collapsed ? "ring-1 ring-orange-500/40" : ""
+                  }`
+                : "text-zinc-500 hover:bg-zinc-900/90 hover:text-zinc-200 border border-transparent"
             }`}
-            style={isActive ? { color: primary } : undefined}
           >
-            <span className={`material-symbols-outlined shrink-0 ${collapsed ? "text-[22px]" : "text-xl"}`}>{icon}</span>
-            {!collapsed && <span className="text-sm font-medium truncate">{label}</span>}
+            {isActive && (
+              <span
+                className="pointer-events-none absolute left-0 top-1/2 h-7 w-1 -translate-y-1/2 rounded-r-full bg-orange-500 shadow-[0_0_12px_rgba(255,122,26,0.7)]"
+                aria-hidden
+              />
+            )}
+            <span
+              className={`material-symbols-outlined shrink-0 ${collapsed ? "text-[22px]" : "text-xl"} ${
+                isActive ? "text-orange-400" : "text-zinc-500 group-hover:text-orange-300/90"
+              }`}
+              style={isActive ? { fontVariationSettings: "'FILL' 1, 'wght' 500" } : undefined}
+            >
+              {icon}
+            </span>
+            {!collapsed && (
+              <span
+                className={`text-sm truncate ${isActive ? "font-semibold text-zinc-50" : "font-medium"}`}
+              >
+                {label}
+              </span>
+            )}
             {collapsed && (
               <span className="pointer-events-none absolute left-full ml-2 rounded-md border border-zinc-700/70 bg-zinc-900 px-2 py-1 text-[11px] font-medium text-zinc-100 whitespace-nowrap opacity-0 translate-x-1 transition-all duration-150 group-hover:opacity-100 group-hover:translate-x-0 z-30 shadow-lg">
                 {label}

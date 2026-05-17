@@ -23,11 +23,11 @@ export default function DashboardLayout({
               "radial-gradient(ellipse 120% 70% at 50% -30%, rgba(255, 122, 26, 0.12) 0%, transparent 55%), radial-gradient(ellipse 80% 50% at 100% 50%, rgba(251, 146, 60, 0.05) 0%, transparent 45%)",
           }}
         />
-        <header className="relative shrink-0 z-10 border-b border-orange-500/15 bg-black/50 backdrop-blur-xl px-6 py-4 flex items-center justify-between shadow-[0_1px_0_rgba(255,122,26,0.06)]">
-          <div className="flex-1 max-w-md min-w-0">
+        <header className="relative z-10 flex shrink-0 items-center justify-between gap-4 border-b border-orange-500/15 bg-black/50 px-4 py-3.5 shadow-[0_1px_0_rgba(255,122,26,0.06)] backdrop-blur-xl md:px-6 md:py-4">
+          <div className="min-w-0 max-w-md flex-1">
             <DashboardGlobalSearch />
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex shrink-0 items-center gap-3 md:gap-4">
             <Link
               href="/dashboard/billing"
               className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border border-orange-500/20 text-zinc-300 hover:bg-orange-500/10 hover:border-orange-500/30 transition-colors"

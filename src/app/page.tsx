@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { LandingView } from "./LandingView";
+import LandingView from "./LandingView";
 
 export const metadata: Metadata = {
   title: "NeuraApp – Welcome | Master AI & Machine Learning",

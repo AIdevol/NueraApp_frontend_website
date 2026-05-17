@@ -1,30 +1,38 @@
 "use client";
 
 import { AssistantMessageBody } from "@/lib/assistantMessageBody";
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import {
+  providerLabel,
+  sendAiChatMessage,
+  type LearnLinkItem,
+} from "@/lib/aiChatClient";
 import { primary } from "@/lib/theme";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-
-type LearnLinkItem = { label: string; href: string };
 
 type Message = {
   role: "user" | "assistant";
   content: string;
   sources?: string[];
   learnLinks?: LearnLinkItem[];
+  provider?: string;
 };
 
 export default function AiChatPage() {
   const router = useRouter();
   const messagesRef = useRef<HTMLDivElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
   const [messages, setMessages] = useState<Message[]>([
     { role: "assistant", content: "How can I help?" },
   ]);
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    return () => abortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     const el = messagesRef.current;
@@ -52,66 +60,53 @@ export default function AiChatPage() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: text }]);
     setSending(true);
-    try {
-      const res = await fetch(`${getPublicApiUrl()}/api/v1/ai-chat`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ message: text }),
-      });
 
-      if (res.status === 401) {
-        localStorage.removeItem("token");
-        router.replace("/login");
-        return;
-      }
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.detail || "Could not get AI response.");
+    const { data, error: chatError } = await sendAiChatMessage(text, token, controller.signal);
+
+    if (chatError?.status === 401) {
+      localStorage.removeItem("token");
+      router.replace("/login");
+      setSending(false);
+      return;
+    }
+
+    if (chatError) {
+      if (chatError.message !== "Request cancelled.") {
+        setError(chatError.message);
         setMessages((prev) => [
           ...prev,
           { role: "assistant", content: "I could not answer right now. Please try again." },
         ]);
-        return;
       }
+      setSending(false);
+      return;
+    }
 
-      const sources: string[] | undefined = Array.isArray(data.sources) ? data.sources : undefined;
-      const learnLinks: LearnLinkItem[] | undefined = Array.isArray(data.learn_links)
-        ? data.learn_links
-            .map((x: { label?: string; href?: string }) => ({
-              label: String(x.label ?? ""),
-              href: String(x.href ?? ""),
-            }))
-            .filter((x: LearnLinkItem) => Boolean(x.label && x.href))
-        : undefined;
+    if (data) {
       setMessages((prev) => [
         ...prev,
         {
           role: "assistant",
-          content: data.reply || "I am here to help. Ask another question.",
-          sources,
-          learnLinks: learnLinks && learnLinks.length > 0 ? learnLinks : undefined,
+          content: data.reply,
+          sources: data.sources,
+          learnLinks: data.learnLinks,
+          provider: data.provider,
         },
       ]);
-    } catch {
-      setError("Connection error.");
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: "Network issue. Please check your connection and retry." },
-      ]);
-    } finally {
-      setSending(false);
     }
+    setSending(false);
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      void sendMessage();
-    }
+    if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
+    // Enter sends; Shift+Enter inserts a new line
+    if (e.shiftKey) return;
+    e.preventDefault();
+    void sendMessage();
   }
 
   return (
@@ -185,9 +180,13 @@ export default function AiChatPage() {
                     ))}
                   </div>
                 ) : null}
-                {m.role === "assistant" && m.sources && m.sources.length > 0 ? (
+                {m.role === "assistant" && (providerLabel(m.provider) || (m.sources && m.sources.length > 0)) ? (
                   <p className="mt-3 text-[11px] text-zinc-500 border-t border-zinc-700/50 pt-3 leading-snug">
-                    {m.sources.join(" · ")}
+                    {providerLabel(m.provider) ? (
+                      <span className="text-orange-400/80">{providerLabel(m.provider)}</span>
+                    ) : null}
+                    {providerLabel(m.provider) && m.sources && m.sources.length > 0 ? " · " : null}
+                    {m.sources && m.sources.length > 0 ? m.sources.join(" · ") : null}
                   </p>
                 ) : null}
               </div>
@@ -240,6 +239,9 @@ export default function AiChatPage() {
               </span>
             </button>
           </div>
+          <p className="mt-1.5 text-[10px] text-zinc-600 hidden sm:block">
+            Press Enter to send · Shift+Enter for a new line
+          </p>
           {error ? <p className="mt-2 text-xs text-red-400/95">{error}</p> : null}
         </div>
       </div>

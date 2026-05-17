@@ -140,6 +140,33 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+const PANEL_STORAGE_PREFIX = "ml-playground-panels:";
+const MIN_EXPLORER_W = 160;
+const MAX_EXPLORER_FR = 0.48;
+const MIN_RIGHT_W = 200;
+const MAX_RIGHT_FR = 0.55;
+const DEFAULT_EXPLORER_W = 240;
+const DEFAULT_RIGHT_W = 384;
+
+function playgroundPanelKey(projectId: string) {
+  return `${PANEL_STORAGE_PREFIX}${projectId}`;
+}
+
+/** Jupyter-style run block: In [n] then command lines, then Out[n] then output lines */
+function jupyterRunBlock(execNum: number, cmdLines: string[], outLines: string[]): string[] {
+  return ["", `In [${execNum}]:`, ...cmdLines, `Out[${execNum}]:`, ...outLines];
+}
+
+/** True if the user likely expects a real shell (venv, pip, cd, …). The console is log-only. */
+function looksLikeShellIntent(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  if (/^(python|py|pip|conda|source\b|cd\b|mkdir\b|rm\b|mv\b|cp\b|ls\b|cat\b|echo\b|export\b|chmod|\.\/|git\b|npm\b|npx\b|curl\b|wget\b)/i.test(t))
+    return true;
+  if (/\bvenv\b/.test(t) || /-\s*venv\b/.test(t) || /\s-m\s+venv\b/.test(t)) return true;
+  return false;
+}
+
 function highlightPythonLike(code: string): string {
   const tokens: string[] = [];
   const save = (html: string) => `@@TOK${tokens.push(html) - 1}@@`;
@@ -335,7 +362,11 @@ function TreeNode({
         onDragOver={node.kind === "folder" ? e => e.preventDefault() : undefined}
         onDrop={node.kind === "folder" ? e => onDropOnFolder(e, node.id) : undefined}
         onClick={() => node.kind === "folder" ? onToggle(node.id) : onSelect(node.id)}
-        onKeyDown={e => { if (e.key === "Enter") node.kind === "folder" ? onToggle(node.id) : onSelect(node.id); }}
+        onKeyDown={(e) => {
+          if (e.key !== "Enter") return;
+          if (node.kind === "folder") onToggle(node.id);
+          else onSelect(node.id);
+        }}
         onContextMenu={e => onContext(e, node.id, node.kind === "folder" ? "folder" : "file")}
         onDoubleClick={e => { e.stopPropagation(); onStartRename(node.id); }}
         className={[
@@ -458,6 +489,12 @@ export default function ProjectPlaygroundPage() {
   const lineNosRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
+  const mainIdeRef = useRef<HTMLElement>(null);
+  const splitDragRef = useRef<"left" | "right" | null>(null);
+  const runExecutionRef = useRef(0);
+
+  const [explorerWidth, setExplorerWidth] = useState(DEFAULT_EXPLORER_W);
+  const [rightPanelWidth, setRightPanelWidth] = useState(DEFAULT_RIGHT_W);
   const keyHandlersRef = useRef<{
     handleSave: () => void;
     handleRunSimulation: () => void;
@@ -484,7 +521,7 @@ export default function ProjectPlaygroundPage() {
   // ── Training ──
   const [consoleInputLine, setConsoleInputLine] = useState("");
   const [logs,         setLogs]         = useState<string[]>([
-    ">> ML Playground ready. Add files in Explorer, set hyperparameters, then train.",
+    ">> ML Playground ready. Drag the vertical lines between Explorer · Editor · Chart/Console to resize. Add files, set hyperparameters, then train.",
   ]);
   const [currentEpoch, setCurrentEpoch] = useState<number | null>(null);
   const [running,      setRunning]      = useState(false);
@@ -498,6 +535,61 @@ export default function ProjectPlaygroundPage() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!projectId || typeof window === "undefined") return;
+    try {
+      const raw = localStorage.getItem(playgroundPanelKey(projectId));
+      if (!raw) return;
+      const j = JSON.parse(raw) as { left?: number; right?: number };
+      if (typeof j.left === "number" && j.left >= MIN_EXPLORER_W) setExplorerWidth(j.left);
+      if (typeof j.right === "number" && j.right >= MIN_RIGHT_W) setRightPanelWidth(j.right);
+    } catch {
+      /* ignore */
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    if (!projectId) return;
+    try {
+      localStorage.setItem(
+        playgroundPanelKey(projectId),
+        JSON.stringify({ left: explorerWidth, right: rightPanelWidth })
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [projectId, explorerWidth, rightPanelWidth]);
+
+  useEffect(() => {
+    function onMove(e: MouseEvent) {
+      const kind = splitDragRef.current;
+      const main = mainIdeRef.current;
+      if (!kind || !main) return;
+      const rect = main.getBoundingClientRect();
+      const maxLeft = rect.width * MAX_EXPLORER_FR;
+      const maxRight = rect.width * MAX_RIGHT_FR;
+      if (kind === "left") {
+        const w = e.clientX - rect.left;
+        setExplorerWidth(Math.min(Math.max(w, MIN_EXPLORER_W), maxLeft));
+      } else {
+        const w = rect.right - e.clientX;
+        setRightPanelWidth(Math.min(Math.max(w, MIN_RIGHT_W), maxRight));
+      }
+    }
+    function onUp() {
+      if (!splitDragRef.current) return;
+      splitDragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    }
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
   }, []);
 
   const bestAcc  = lossPoints.length ? Math.max(...lossPoints.map(p => p.acc)) : null;
@@ -762,48 +854,71 @@ export default function ProjectPlaygroundPage() {
         }
         if (data.ok === false) {
           const detail = data.detail || "Run failed";
-          setLogs((prev) => [...prev, "", `>> Server: ${detail}`, `>> Preview fallback:`, ...simulatePythonRun(name, editorCode)]);
+          runExecutionRef.current += 1;
+          const n = runExecutionRef.current;
+          setLogs((prev) => [
+            ...prev,
+            ...jupyterRunBlock(n, [`>> python ${name}`], [
+              `>> Server: ${detail}`,
+              "",
+              ">> Preview fallback:",
+              ...simulatePythonRun(name, editorCode),
+            ]),
+          ]);
           setRightPanelTab("console");
           showToast(detail, false);
           return;
         }
         if (typeof data.exit_code === "number") {
-          const lines: string[] = [`>> python ${name} (server)`];
+          runExecutionRef.current += 1;
+          const n = runExecutionRef.current;
+          const out: string[] = [];
           const so = (data.stdout ?? "").trimEnd();
           const se = (data.stderr ?? "").trimEnd();
-          if (so) lines.push(...so.split("\n"));
-          if (se) lines.push(...se.split("\n").map((l) => `[stderr] ${l}`));
-          if (!so && !se) lines.push("(no output)");
-          lines.push(`>> exit code ${data.exit_code}`);
-          setLogs((prev) => [...prev, "", ...lines]);
+          if (so) out.push(...so.split("\n"));
+          if (se) out.push(...se.split("\n").map((l) => `[stderr] ${l}`));
+          if (!so && !se) out.push("(no output)");
+          out.push(`>> exit code ${data.exit_code}`);
+          setLogs((prev) => [
+            ...prev,
+            ...jupyterRunBlock(n, [`>> python ${name} (server)`], out),
+          ]);
           setRightPanelTab("console");
           showToast("Run finished — see Console");
           return;
         }
+        runExecutionRef.current += 1;
+        const n = runExecutionRef.current;
         setLogs((prev) => [
           ...prev,
-          "",
-          `>> Unexpected API response`,
-          ...simulatePythonRun(name, editorCode),
+          ...jupyterRunBlock(n, [`>> python ${name}`], [">> Unexpected API response", ...simulatePythonRun(name, editorCode)]),
         ]);
         setRightPanelTab("console");
         showToast("Unexpected response — preview in Console", false);
         return;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
+        runExecutionRef.current += 1;
+        const n = runExecutionRef.current;
         setLogs((prev) => [
           ...prev,
-          "",
-          `>> Could not reach API (${msg}). Preview only:`,
-          ...simulatePythonRun(name, editorCode),
+          ...jupyterRunBlock(n, [`>> python ${name}`], [
+            `>> Could not reach API (${msg}). Preview only:`,
+            ...simulatePythonRun(name, editorCode),
+          ]),
         ]);
         setRightPanelTab("console");
         showToast("API unreachable — preview in Console", false);
         return;
       }
     }
+    runExecutionRef.current += 1;
+    const n = runExecutionRef.current;
     const lines = simulatePythonRun(name, editorCode);
-    setLogs((prev) => [...prev, "", `>> NEXT_PUBLIC_API_URL not set — preview only:`, ...lines]);
+    setLogs((prev) => [
+      ...prev,
+      ...jupyterRunBlock(n, [`>> NEXT_PUBLIC_API_URL not set — preview only`, `>> python ${name}`], lines),
+    ]);
     setRightPanelTab("console");
     showToast("Configure API URL for real Python runs", false);
   }
@@ -1036,7 +1151,7 @@ export default function ProjectPlaygroundPage() {
     rootDragDepthRef.current += 1;
     setRootDragOver(true);
   }
-  function handleRootDragLeave(_e: React.DragEvent) {
+  function handleRootDragLeave() {
     rootDragDepthRef.current -= 1;
     if (rootDragDepthRef.current <= 0) { rootDragDepthRef.current = 0; setRootDragOver(false); }
   }
@@ -1126,6 +1241,7 @@ export default function ProjectPlaygroundPage() {
         /* ignore */
       }
     }
+    runExecutionRef.current = 0;
     setLogs([">> Playground reset. Workspace cleared on server and in this browser."]);
   }
 
@@ -1153,6 +1269,16 @@ export default function ProjectPlaygroundPage() {
   }
 
   keyHandlersRef.current = { handleSave, handleRunSimulation, handleRunCurrentFile };
+
+  function startSplitDrag(kind: "left" | "right") {
+    return (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      splitDragRef.current = kind;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+    };
+  }
 
   if (!mounted) return null;
 
@@ -1319,12 +1445,13 @@ export default function ProjectPlaygroundPage() {
         )}
 
         {/* ── Main IDE ── */}
-        <main className={`flex-1 flex overflow-hidden border-t ${border}`}>
+        <main ref={mainIdeRef} className={`flex-1 flex overflow-hidden border-t ${border} min-h-0`}>
 
           {/* ══ LEFT: File Explorer ══ */}
           <aside
+            style={{ width: explorerWidth, flexShrink: 0 }}
             className={[
-              `w-52 md:w-60 border-r ${border} ${bg} flex flex-col shrink-0`,
+              `border-r ${border} ${bg} flex flex-col min-h-0 overflow-hidden`,
               rootDragOver && !dragOverFolderId ? "ring-1 ring-inset ring-blue-500 bg-blue-500/5" : "",
             ].join(" ")}
             onContextMenu={handleRootContext}
@@ -1364,7 +1491,7 @@ export default function ProjectPlaygroundPage() {
             {/* Drag hint */}
             <div className={`px-2 pb-1 text-[9px] ${textDim} flex items-center gap-0.5`}>
               <span className="material-symbols-outlined" style={{ fontSize: 10 }}>drag_indicator</span>
-              Drag to move · Double-click to rename · Workspace syncs to the server (local backup if offline)
+              Drag files to move · Double-click to rename · Drag the wide vertical line right of Explorer to resize panels
             </div>
 
             {/* Datasets section (moved up for better visibility) */}
@@ -1425,8 +1552,31 @@ export default function ProjectPlaygroundPage() {
 
           </aside>
 
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize explorer"
+            onMouseDown={startSplitDrag("left")}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              setExplorerWidth(DEFAULT_EXPLORER_W);
+            }}
+            title="Drag to resize · double-click to reset"
+            className={[
+              "w-2 shrink-0 cursor-col-resize z-10 flex justify-center group touch-none",
+              theme === "dark" ? "hover:bg-white/[0.06]" : "hover:bg-black/[0.04]",
+            ].join(" ")}
+          >
+            <span
+              className={[
+                "w-px h-full transition-colors",
+                theme === "dark" ? "bg-slate-700 group-hover:bg-primary/50" : "bg-slate-300 group-hover:bg-primary/50",
+              ].join(" ")}
+            />
+          </div>
+
           {/* ══ CENTER: Editor + Tabs ══ */}
-          <section className={`flex-1 ${bg} flex flex-col overflow-hidden`}>
+          <section className={`flex-1 min-w-0 ${bg} flex flex-col overflow-hidden`}>
             <div className={`flex items-center ${bg2} border-b ${border} shrink-0`}>
               {([
                 { id: "editor",      icon: "code",      label: "Editor"      },
@@ -1495,8 +1645,20 @@ export default function ProjectPlaygroundPage() {
               openFileId ? (
                 <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
                   <div className="flex-1 overflow-auto flex font-mono text-xs md:text-sm leading-relaxed min-h-0">
-                  <div ref={lineNosRef} className={`${textDim} text-right px-3 pt-4 select-none shrink-0 text-[11px] leading-relaxed overflow-hidden`}>
-                    {editorCode.split("\n").map((_, i) => <div key={i}>{i + 1}</div>)}
+                  <div
+                    ref={lineNosRef}
+                    className={[
+                      "text-right pl-2 pr-2 sm:pr-3 pt-4 select-none shrink-0 text-[11px] leading-relaxed overflow-hidden tabular-nums border-r min-w-[2.75rem] sm:min-w-[3.25rem]",
+                      theme === "dark"
+                        ? "bg-[#1e1e22] text-[#858585] border-slate-700/90"
+                        : "bg-[#f3f3f5] text-[#6e6e6e] border-slate-300",
+                    ].join(" ")}
+                  >
+                    {editorCode.split("\n").map((_, i) => (
+                      <div key={i} className="pr-0.5">
+                        {i + 1}
+                      </div>
+                    ))}
                   </div>
                   <div className="flex-1 relative overflow-hidden">
                     <pre
@@ -1669,8 +1831,34 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
             )}
           </section>
 
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize chart and console panel"
+            onMouseDown={startSplitDrag("right")}
+            onDoubleClick={(e) => {
+              e.preventDefault();
+              setRightPanelWidth(DEFAULT_RIGHT_W);
+            }}
+            title="Drag to resize · double-click to reset"
+            className={[
+              "w-2 shrink-0 cursor-col-resize z-10 flex justify-center group touch-none",
+              theme === "dark" ? "hover:bg-white/[0.06]" : "hover:bg-black/[0.04]",
+            ].join(" ")}
+          >
+            <span
+              className={[
+                "w-px h-full transition-colors",
+                theme === "dark" ? "bg-slate-700 group-hover:bg-primary/50" : "bg-slate-300 group-hover:bg-primary/50",
+              ].join(" ")}
+            />
+          </div>
+
           {/* ══ RIGHT PANEL ══ */}
-          <aside className={`w-80 md:w-96 border-l ${border} flex flex-col shrink-0 ${bg}`}>
+          <aside
+            style={{ width: rightPanelWidth, flexShrink: 0 }}
+            className={`border-l ${border} flex flex-col min-h-0 overflow-hidden ${bg}`}
+          >
             <div className={`flex items-center ${bg2} border-b ${border} shrink-0`}>
               {([
                 { id: "visualization", label: "Chart",    icon: "show_chart" },
@@ -1739,8 +1927,13 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
             {rightPanelTab === "console" && (
               <div className="flex-1 flex flex-col overflow-hidden min-h-0">
                 <div className={`px-3 py-1.5 flex items-center justify-between border-b ${border} ${bg2}`}>
-                  <span className={`text-[10px] font-semibold uppercase tracking-wider ${textDim}`}>Console</span>
-                  <div className="flex items-center gap-1">
+                  <div className="min-w-0 flex-1 flex flex-col gap-0.5 pr-2">
+                    <span className={`text-[10px] font-semibold uppercase tracking-wider ${textDim}`}>Console</span>
+                    <span className={`text-[9px] leading-tight ${textDim} opacity-90`}>
+                      Log only — not a terminal (no venv, pip, or shell)
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       title="Clear log"
@@ -1760,11 +1953,19 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
                   </div>
                 </div>
                 <div className="flex-1 min-h-0 p-3 overflow-y-auto font-mono text-[11px] space-y-0.5">
-                  {logs.map((line, idx) => (
+                  {logs.map((line, idx) => {
+                    const isJupyterIn = /^In \[\d+\]:$/.test(line);
+                    const isJupyterInScratch = /^In \[ \]:/.test(line);
+                    const isJupyterOut = /^Out\[\d+\]:$/.test(line);
+                    return (
                     <div
                       key={idx}
                       className={
-                        line.startsWith("[stderr]") || /Error|Traceback|Exception/i.test(line)
+                        isJupyterIn || isJupyterInScratch
+                          ? "text-sky-400 font-semibold break-words"
+                          : isJupyterOut
+                            ? "text-amber-400/95 font-semibold break-words mt-1"
+                          : line.startsWith("[stderr]") || /Error|Traceback|Exception/i.test(line)
                           ? "text-rose-400 break-words"
                           : line.startsWith(">>")
                             ? textDim
@@ -1777,24 +1978,48 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
                     >
                       {line || <br />}
                     </div>
-                  ))}
+                    );
+                  })}
                   {running && <div className={`animate-pulse ${textDim}`}>_</div>}
                 </div>
                 <div className={`shrink-0 border-t ${border} px-2 py-2 ${bg2}`}>
-                  <label className={`block text-[9px] uppercase tracking-wider ${textDim} mb-1`}>Input (notes)</label>
-                  <input
-                    type="text"
-                    value={consoleInputLine}
-                    onChange={(e) => setConsoleInputLine(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && consoleInputLine.trim()) {
-                        setLogs((p) => [...p, `>> ${consoleInputLine.trim()}`]);
+                  <label className={`block text-[9px] uppercase tracking-wider ${textDim} mb-1`}>
+                    Notebook prompt (append to log — never runs as code or shell)
+                  </label>
+                  <div className="flex items-center gap-1.5 rounded-lg border border-transparent focus-within:border-primary/30 focus-within:ring-2 focus-within:ring-primary/15">
+                    <span
+                      className={`shrink-0 pl-1 font-mono text-[11px] select-none ${
+                        theme === "dark" ? "text-sky-400/90" : "text-sky-600"
+                      }`}
+                    >
+                      In [ ]:
+                    </span>
+                    <input
+                      type="text"
+                      value={consoleInputLine}
+                      onChange={(e) => setConsoleInputLine(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || !consoleInputLine.trim()) return;
+                        const raw = consoleInputLine.trim();
+                        const wantsShell = looksLikeShellIntent(raw);
+                        setLogs((p) => {
+                          const next = [...p, `In [ ]: ${raw}`];
+                          if (wantsShell) {
+                            next.push(
+                              ">> No shell in ML Playground. Create a venv on your computer, e.g. Terminal: python3 -m venv .venv  (note: -m venv, not -venv) then source .venv/bin/activate (macOS/Linux) or .venv\\Scripts\\activate (Windows)."
+                            );
+                          }
+                          return next;
+                        });
                         setConsoleInputLine("");
-                      }
-                    }}
-                    placeholder="Type here and press Enter — adds a line to the log (does not run Python)"
-                    className={`w-full rounded-lg border ${border} bg-black/30 px-2.5 py-2 text-[11px] font-mono outline-none focus:ring-2 focus:ring-primary/25 ${text}`}
-                  />
+                        if (wantsShell) {
+                          showToast("This console cannot run commands — use your OS terminal for venv / pip.", false);
+                        }
+                      }}
+                      placeholder="notes only — use Run file for .py; Terminal for venv"
+                      className={`flex-1 min-w-0 rounded-md border ${border} bg-black/30 py-2 pr-2.5 text-[11px] font-mono outline-none ${text}`}
+                    />
+                  </div>
                 </div>
               </div>
             )}
@@ -1909,6 +2134,9 @@ DROPOUT = ${hyperParams.dropout}  HIDDEN = ${hyperParams.hiddenSize}`}
               <li className="flex justify-between gap-4"><span>Indent</span><kbd className="px-2 py-0.5 rounded bg-slate-800 text-xs">Tab</kbd></li>
             </ul>
             <p className="mt-4 text-xs text-slate-500">
+              The <strong>Console</strong> is a <strong>log</strong> (training output, Run file results, notes). It is <strong>not</strong> a system shell — you cannot create a venv, run <code className="text-slate-300">pip</code>, or execute arbitrary commands there. On your computer, open Terminal and run <code className="text-slate-300">python3 -m venv .venv</code>.
+            </p>
+            <p className="mt-2 text-xs text-slate-500">
               Workspace is stored in the <strong>database</strong> per project (debounced sync). The browser keeps a backup in <strong>localStorage</strong> if the API is unreachable. Export JSON for offline backup.
             </p>
           </div>

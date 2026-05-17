@@ -4,6 +4,9 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import PracticeIdeAiPanel from "@/components/practice/PracticeIdeAiPanel";
+import PracticeMonacoEditor from "@/components/practice/PracticeMonacoEditor";
+import { bearerAuthHeaders } from "@/lib/authHeaders";
 import { getPublicApiUrl } from "@/lib/publicUrl";
 import { primary } from "@/lib/theme";
 
@@ -36,6 +39,20 @@ type BottomIdeTab = "testcase" | "result";
 
 type SubmissionRow = { at: string; lang: Language; note: string };
 
+type ServerSubmission = {
+  id: string;
+  problem_id: string;
+  language: string;
+  status: string;
+  passed: number;
+  total: number;
+  execution_time_ms: number;
+  memory_kb: number;
+  attempt: number;
+  created_at: string;
+  hints?: string | null;
+};
+
 /** Fixes legacy or hand-edited boilerplate that breaks Python (e.g. stray comma before `->`). */
 function sanitizeStoredCode(raw: string, lang: Language): string {
   if (lang !== "python") return raw;
@@ -44,7 +61,7 @@ function sanitizeStoredCode(raw: string, lang: Language): string {
 
 function defaultTemplate(lang: Language, title: string) {
   if (lang === "python") {
-    return `# ${title}\nfrom typing import List, Optional\n\nclass Solution:\n    def solve(self) -> None:\n        """Implement your solution here."""\n        pass\n`;
+    return `# ${title}\nfrom typing import Any\n\nclass Solution:\n    def solve(self, data: dict[str, Any]):\n        \"\"\"Return the output for the given testcase data.\"\"\"\n        return None\n`;
   }
   if (lang === "javascript") {
     return `// ${title}\n/**\n * @param {number[]} nums\n * @returns {boolean}\n */\nfunction solve(nums) {\n  // ...\n}\n`;
@@ -75,40 +92,19 @@ function difficultyStyle(difficulty: string) {
   };
 }
 
-function mockCasesFor(_problem: PracticeProblem): TestCase[] {
+function defaultTestCases(): TestCase[] {
   return [
     {
       id: "1",
       label: "Case 1",
-      fields: [
-        { name: "nums", value: "[2, 7, 11, 15]" },
-        { name: "target", value: "9" },
-      ],
-      expected: "[0, 1]",
-    },
-    {
-      id: "2",
-      label: "Case 2",
-      fields: [
-        { name: "nums", value: "[3, 2, 4]" },
-        { name: "target", value: "6" },
-      ],
-      expected: "[1, 2]",
-    },
-    {
-      id: "3",
-      label: "Case 3",
-      fields: [
-        { name: "nums", value: "[3, 3]" },
-        { name: "target", value: "6" },
-      ],
-      expected: "[0, 1]",
+      fields: [{ name: "input", value: "" }],
+      expected: "",
     },
   ];
 }
 
-function casesStorageKey(problemId: string) {
-  return `practice:testcases:${problemId}`;
+function casesStorageKey(userPrefix: string, problemId: string) {
+  return `practice:${userPrefix}:testcases:${problemId}`;
 }
 
 function migrateLegacyCase(raw: unknown): TestCase | null {
@@ -147,60 +143,40 @@ function tabButtonClass(active: boolean) {
   ].join(" ");
 }
 
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-function highlightCode(code: string, lang: Language): string {
-  const tripleTokens: string[] = [];
-  let prepped = code;
-  if (lang === "python") {
-    prepped = prepped.replace(/("""[\s\S]*?"""|'''[\s\S]*?''')/g, (m) => {
-      const idx = tripleTokens.length;
-      tripleTokens.push(m);
-      return `__PYTRIP${idx}__`;
-    });
-  }
-
-  const tokens: string[] = [];
-  const save = (html: string) => `@@TOK${tokens.push(html) - 1}@@`;
-
-  let out = escapeHtml(prepped);
-  const commentRe = lang === "python" ? /(#.*)$/gm : /(\/\/.*)$/gm;
-  out = out
-    .replace(commentRe, (m) => save(`<span style="color:#6b7280;font-style:italic">${m}</span>`))
-    .replace(
-      /("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')/g,
-      (m) => save(`<span style="color:#c3e88d">${m}</span>`)
-    )
-    .replace(
-      /\b(class|def|return|if|else|elif|for|while|in|import|from|try|except|finally|pass|break|continue|function|const|let|var|new|switch|case|default|public|private|protected|void|int|long|float|double|char|bool|true|false|null|nullptr|using|namespace|include)\b/g,
-      '<span style="color:#c792ea">$1</span>'
-    )
-    .replace(/\b(\d+\.?\d*)\b/g, '<span style="color:#f78c6c">$1</span>');
-
-  out = out.replace(/@@TOK(\d+)@@/g, (_, i) => tokens[Number(i)] ?? "");
-  if (lang === "python") {
-    out = out.replace(/__PYTRIP(\d+)__/g, (_, i) => {
-      const raw = tripleTokens[Number(i)] ?? "";
-      return `<span style="color:#c3e88d">${escapeHtml(raw)}</span>`;
-    });
-  }
-  return out;
-}
-
 export default function PracticeSolvePage() {
   const router = useRouter();
   const params = useParams<{ problemId: string }>();
   const problemId = useMemo(() => decodeURIComponent(params.problemId ?? ""), [params.problemId]);
 
+  function hashString(input: string): string {
+    // Simple non-crypto hash to keep localStorage keys short.
+    let hash = 0;
+    for (let i = 0; i < input.length; i++) {
+      hash = (hash * 31 + input.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(16);
+  }
+
+  const [userPrefix, setUserPrefix] = useState("anon");
+
+  useEffect(() => {
+    // Namespace localStorage so saved solutions/submissions are per authenticated user.
+    if (typeof window === "undefined") return;
+    const token = localStorage.getItem("token") || "";
+    setUserPrefix(token ? `u:${hashString(token)}` : "anon");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const [problem, setProblem] = useState<PracticeProblem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const storageKey = useMemo(() => `practice:solution:${problemId}`, [problemId]);
-  const solvedKey = useMemo(() => `practice:solved:${problemId}`, [problemId]);
-  const submissionsKey = useMemo(() => `practice:submissions:${problemId}`, [problemId]);
+  const storageKey = useMemo(() => `practice:${userPrefix}:solution:${problemId}`, [problemId, userPrefix]);
+  const solvedKey = useMemo(() => `practice:${userPrefix}:solved:${problemId}`, [problemId, userPrefix]);
+  const submissionsKey = useMemo(
+    () => `practice:${userPrefix}:submissions:${problemId}`,
+    [problemId, userPrefix]
+  );
 
   const [lang, setLang] = useState<Language>("python");
   const [code, setCode] = useState("");
@@ -212,14 +188,22 @@ export default function PracticeSolvePage() {
   const [editorFrac, setEditorFrac] = useState(0.58);
   const [showTestcaseSource, setShowTestcaseSource] = useState(false);
   const [consoleLines, setConsoleLines] = useState<string[]>([
-    ">> Ready. Run checks syntax (and C++/Python via API when available). No code execution or hidden tests until a judge is connected.",
+    ">> Ready. Python runs on the server; JavaScript is parse-checked in the browser; C++ uses a syntax-only compile when a compiler is available.",
   ]);
+  const [lastRunMeta, setLastRunMeta] = useState<{
+    status?: string;
+    execution_time?: string;
+    memory_used?: string;
+    hints?: string;
+  } | null>(null);
   const [caseStatus, setCaseStatus] = useState<Record<string, "idle" | "pass" | "fail">>({});
   const [runBusy, setRunBusy] = useState(false);
+  const [submitBusy, setSubmitBusy] = useState(false);
   const [solved, setSolved] = useState(false);
   const [submissions, setSubmissions] = useState<SubmissionRow[]>([]);
-  const codeTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const codeHighlightRef = useRef<HTMLPreElement>(null);
+  const [serverSubmissions, setServerSubmissions] = useState<ServerSubmission[]>([]);
+  const [serverSubmissionsLoading, setServerSubmissionsLoading] = useState(false);
+  const [serverSubmissionsRefreshKey, setServerSubmissionsRefreshKey] = useState(0);
   const mainRowRef = useRef<HTMLDivElement>(null);
   const rightColRef = useRef<HTMLDivElement>(null);
   const hDragRef = useRef<{ startX: number; startPct: number; w: number } | null>(null);
@@ -227,6 +211,8 @@ export default function PracticeSolvePage() {
   const splitPersistRef = useRef({ left: 40, editor: 0.58 });
   const pendingActiveCaseIdx = useRef<number | null>(null);
   const [isWideLayout, setIsWideLayout] = useState(false);
+  const [aiOpen, setAiOpen] = useState(false);
+  const [isFullScreen, setIsFullScreen] = useState(false);
 
   const appendConsole = useCallback((lines: string[]) => {
     setConsoleLines((prev) => [...prev, ...lines]);
@@ -238,20 +224,15 @@ export default function PracticeSolvePage() {
       setError("");
       try {
         const api = getPublicApiUrl();
-        const res1 = await fetch(`${api}/api/v1/practice-problems/${encodeURIComponent(problemId)}`);
-        if (res1.ok) {
-          const data1 = await res1.json().catch(() => ({}));
-          setProblem(data1 as PracticeProblem);
-          return;
-        }
-        const res2 = await fetch(`${api}/api/v1/problem-library/dsa/${encodeURIComponent(problemId)}`);
-        const data2 = await res2.json().catch(() => ({}));
-        if (!res2.ok) {
-          setError((data2 as { detail?: string }).detail || "Failed to load problem");
+        const headers = bearerAuthHeaders();
+        const res = await fetch(`${api}/api/v1/practice-problems/${encodeURIComponent(problemId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError((data as { detail?: string }).detail || "Failed to load problem");
           setProblem(null);
           return;
         }
-        setProblem(data2 as PracticeProblem);
+        setProblem(data as PracticeProblem);
       } catch {
         setError("Connection error.");
         setProblem(null);
@@ -272,6 +253,35 @@ export default function PracticeSolvePage() {
       setSubmissions([]);
     }
   }, [problemId, solvedKey, submissionsKey]);
+
+  useEffect(() => {
+    async function loadServerSubmissions() {
+      if (typeof window === "undefined" || !problemId) return;
+      const api = getPublicApiUrl();
+      const headers = bearerAuthHeaders();
+      if (!headers.Authorization) return;
+
+      setServerSubmissionsLoading(true);
+      try {
+        const res = await fetch(
+          `${api}/api/v1/practice-problems/submissions?problem_id=${encodeURIComponent(problemId)}&limit=8`,
+          { headers }
+        );
+        const data = await res.json().catch(() => ({}));
+        if (res.ok && Array.isArray((data as any).submissions)) {
+          setServerSubmissions((data as any).submissions as ServerSubmission[]);
+        } else {
+          setServerSubmissions([]);
+        }
+      } catch {
+        setServerSubmissions([]);
+      } finally {
+        setServerSubmissionsLoading(false);
+      }
+    }
+
+    void loadServerSubmissions();
+  }, [problemId, serverSubmissionsRefreshKey]);
 
   useEffect(() => {
     if (!problemId) return;
@@ -312,9 +322,26 @@ export default function PracticeSolvePage() {
   }, []);
 
   useEffect(() => {
+    if (!isFullScreen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setIsFullScreen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+
+    // Prevent background scroll while the IDE covers the viewport.
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [isFullScreen]);
+
+  useEffect(() => {
     if (typeof window === "undefined" || !problemId) return;
     try {
-      const raw = localStorage.getItem(`practice:ideSplit:${problemId}`);
+      const raw = localStorage.getItem(`practice:${userPrefix}:ideSplit:${problemId}`);
       if (raw) {
         const j = JSON.parse(raw) as { left?: number; editor?: number };
         if (typeof j.left === "number" && j.left >= 22 && j.left <= 58) setLeftWidthPct(j.left);
@@ -323,7 +350,7 @@ export default function PracticeSolvePage() {
     } catch {
       // ignore
     }
-  }, [problemId]);
+  }, [problemId, userPrefix]);
 
   useEffect(() => {
     splitPersistRef.current = { left: leftWidthPct, editor: editorFrac };
@@ -333,7 +360,7 @@ export default function PracticeSolvePage() {
     if (!problem) return;
     if (typeof window === "undefined" || !problemId) return;
     try {
-      const raw = localStorage.getItem(casesStorageKey(problemId));
+      const raw = localStorage.getItem(casesStorageKey(userPrefix, problemId));
       if (raw) {
         const arr = JSON.parse(raw) as unknown[];
         if (Array.isArray(arr) && arr.length) {
@@ -348,18 +375,18 @@ export default function PracticeSolvePage() {
     } catch {
       // ignore
     }
-    setTestCasesState(mockCasesFor(problem));
+    setTestCasesState(defaultTestCases());
     setActiveCaseIdx(0);
-  }, [problem, problemId]);
+  }, [problem, problemId, userPrefix]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !problemId || testCasesState.length === 0) return;
     try {
-      localStorage.setItem(casesStorageKey(problemId), JSON.stringify(testCasesState));
+      localStorage.setItem(casesStorageKey(userPrefix, problemId), JSON.stringify(testCasesState));
     } catch {
       // ignore
     }
-  }, [problemId, testCasesState]);
+  }, [problemId, userPrefix, testCasesState]);
 
   useEffect(() => {
     if (pendingActiveCaseIdx.current == null) return;
@@ -388,7 +415,10 @@ export default function PracticeSolvePage() {
         try {
           const { left, editor } = splitPersistRef.current;
           if (problemId) {
-            localStorage.setItem(`practice:ideSplit:${problemId}`, JSON.stringify({ left, editor }));
+            localStorage.setItem(
+              `practice:${userPrefix}:ideSplit:${problemId}`,
+              JSON.stringify({ left, editor })
+            );
           }
         } catch {
           // ignore
@@ -487,13 +517,6 @@ export default function PracticeSolvePage() {
     persist({ lang, code: nextCode });
   }
 
-  function onCodeScroll() {
-    const el = codeTextareaRef.current;
-    if (!el || !codeHighlightRef.current) return;
-    codeHighlightRef.current.scrollTop = el.scrollTop;
-    codeHighlightRef.current.scrollLeft = el.scrollLeft;
-  }
-
   function resetTemplate() {
     const next = defaultTemplate(lang, problem?.title ?? "Solution");
     setCode(next);
@@ -505,7 +528,7 @@ export default function PracticeSolvePage() {
     if (runBusy) return;
     setRunBusy(true);
     setIdeBottomTab("result");
-    appendConsole([">> Local Run — syntax / parse check only (no program execution, no I/O tests)."]);
+    appendConsole([`>> Run (${lang})…`]);
 
     const idleCases: Record<string, "idle" | "pass" | "fail"> = {};
     for (const c of testCasesState) idleCases[c.id] = "idle";
@@ -521,7 +544,7 @@ export default function PracticeSolvePage() {
         try {
           // eslint-disable-next-line no-new-func
           new Function(code);
-          appendConsole([">> JavaScript: parse OK.", ">> Hidden tests stay disabled until a judge is wired to the API."]);
+          appendConsole([">> JavaScript: parse OK.", ">> Execution and custom testcases need a connected judge."]);
           setCaseStatus(idleCases);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
@@ -532,6 +555,99 @@ export default function PracticeSolvePage() {
       }
 
       const api = getPublicApiUrl();
+
+      if (lang === "python") {
+        appendConsole([">> Python: judging against your testcases…"]);
+        const headers = bearerAuthHeaders();
+
+        const attemptKey = `practice:${userPrefix}:attempt:${problemId}`;
+        let nextAttempt = 1;
+        try {
+          const raw = localStorage.getItem(attemptKey);
+          const parsed = raw ? Number(raw) : 0;
+          if (Number.isFinite(parsed)) nextAttempt = parsed + 1;
+          localStorage.setItem(attemptKey, String(nextAttempt));
+        } catch {
+          // ignore
+        }
+
+        const payload = {
+          language: "python",
+          code,
+          timeout_sec: 6,
+          memory_kb: 256000,
+          attempt: nextAttempt,
+          async_execution: false,
+          problem_id: problemId,
+          testcases: testCasesState.map((tc, idx) => ({
+            id: String(idx + 1),
+            expected: tc.expected,
+            fields: (tc.fields || []).map((f) => ({ name: f.name, value: f.value })),
+          })),
+        };
+
+        const res = await fetch(`${api}/api/v1/practice-problems/run-code`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...headers },
+          body: JSON.stringify(payload),
+        });
+
+        const data = (await res.json().catch(() => ({}))) as {
+          status?: string;
+          passed_testcases?: number;
+          total_testcases?: number;
+          execution_time?: string;
+          memory_used?: string;
+          error?: string | null;
+          output?: string;
+          expected_output?: string;
+          hints?: string;
+        };
+
+        if (!res.ok || !data.status) {
+          appendConsole([`>> Judge error: ${data.error || res.statusText}`]);
+          failAll();
+          return;
+        }
+
+        appendConsole([
+          `>> Result: ${data.status}`,
+          `>> Passed: ${data.passed_testcases ?? 0}/${data.total_testcases ?? testCasesState.length}`,
+          `>> Time: ${data.execution_time || "0 ms"} · Memory: ${data.memory_used || "0 KB"}`,
+        ]);
+
+        if (data.output) appendConsole([`>> Output: ${data.output}`]);
+        if (data.expected_output && data.status !== "Accepted") {
+          appendConsole([`>> Expected: ${data.expected_output}`]);
+        }
+        if (data.error) appendConsole([`>> Error: ${data.error}`]);
+        if (data.hints) appendConsole([`>> Hint: ${data.hints}`]);
+
+        setLastRunMeta({
+          status: data.status,
+          execution_time: data.execution_time,
+          memory_used: data.memory_used,
+          hints: data.hints,
+        });
+
+        const accepted = data.status === "Accepted";
+        setSolved(accepted);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(solvedKey, accepted ? "1" : "0");
+        }
+        setServerSubmissionsRefreshKey((k) => k + 1);
+
+        if (data.status === "Accepted") {
+          const passed = Object.fromEntries(
+            testCasesState.map((c) => [c.id, "pass"] as const)
+          ) as Record<string, "idle" | "pass" | "fail">;
+          setCaseStatus(passed);
+        } else {
+          failAll();
+        }
+        return;
+      }
+
       const res = await fetch(`${api}/api/v1/practice-problems/syntax-check`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -541,16 +657,13 @@ export default function PracticeSolvePage() {
       if (!res.ok) {
         appendConsole([
           `>> Syntax API error (${res.status}): ${(data as { detail?: string }).detail || res.statusText}`,
-          ">> Is the NeuraApp backend running? You can still edit and Submit to save locally.",
+          ">> Is the backend running? You can still edit and Submit to save locally.",
         ]);
         setCaseStatus(idleCases);
         return;
       }
       if (data.ok) {
-        appendConsole([
-          `>> ${data.detail || "OK"}`,
-          ">> Full grading and sample I/O require a connected judge — not executed here.",
-        ]);
+        appendConsole([`>> ${data.detail || "OK"}`, ">> C++ execution is not enabled here (syntax check only)."]);
         setCaseStatus(idleCases);
       } else {
         appendConsole([`>> ${data.detail || "Syntax check failed."}`]);
@@ -558,7 +671,7 @@ export default function PracticeSolvePage() {
       }
     } catch {
       appendConsole([
-        ">> Could not reach the API (network or CORS). For JavaScript, parse runs in the browser; Python/C++ need the backend.",
+        ">> Could not reach the API (network or CORS). JavaScript parse runs in the browser; Python run and C++ check need the backend.",
         ">> Start the API server or check NEXT_PUBLIC_API_URL.",
       ]);
       setCaseStatus(idleCases);
@@ -567,26 +680,166 @@ export default function PracticeSolvePage() {
     }
   }, [appendConsole, code, lang, runBusy, testCasesState]);
 
-  function submitCode() {
-    const row: SubmissionRow = {
-      at: new Date().toISOString(),
-      lang,
-      note: "Saved locally",
-    };
-    const nextSubs = [row, ...submissions].slice(0, 20);
-    setSubmissions(nextSubs);
-    if (typeof window !== "undefined") {
-      localStorage.setItem(submissionsKey, JSON.stringify(nextSubs));
-      localStorage.setItem(solvedKey, "1");
+  async function submitCode() {
+    if (submitBusy || runBusy) return;
+    setSubmitBusy(true);
+    setIdeBottomTab("result");
+    appendConsole([">> Submit: enqueueing judge…"]);
+
+    try {
+      // Keep the old local submit behavior for JavaScript (no backend judge yet).
+      if (lang === "javascript") {
+        const row: SubmissionRow = {
+          at: new Date().toISOString(),
+          lang,
+          note: "Saved locally",
+        };
+        const nextSubs = [row, ...submissions].slice(0, 20);
+        setSubmissions(nextSubs);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(submissionsKey, JSON.stringify(nextSubs));
+          localStorage.setItem(solvedKey, "1");
+        }
+        setSolved(true);
+        appendConsole([">> Submit: saved to this browser.", `>> Language: ${lang}`]);
+        setServerSubmissionsRefreshKey((k) => k + 1);
+        return;
+      }
+
+      const api = getPublicApiUrl();
+      const headers = bearerAuthHeaders();
+
+      if (!headers.Authorization) {
+        appendConsole([">> Submit failed: login required."]);
+        return;
+      }
+
+      const attemptKey = `practice:${userPrefix}:attempt:${problemId}`;
+      let nextAttempt = 1;
+      try {
+        const raw = localStorage.getItem(attemptKey);
+        const parsed = raw ? Number(raw) : 0;
+        if (Number.isFinite(parsed) && parsed >= 1) nextAttempt = parsed + 1;
+        localStorage.setItem(attemptKey, String(nextAttempt));
+      } catch {
+        // ignore
+      }
+
+      const payload = {
+        language: lang === "cpp" ? "cpp" : "python",
+        code,
+        problem_id: problemId,
+        timeout_sec: 2,
+        memory_kb: 262144,
+        attempt: nextAttempt,
+        async_execution: true,
+        testcases: testCasesState.map((tc, idx) => ({
+          id: String(idx + 1),
+          expected: tc.expected,
+          fields: (tc.fields || []).map((f) => ({ name: f.name, value: f.value })),
+        })),
+      };
+
+      const res = await fetch(`${api}/api/v1/practice-problems/run-code`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify(payload),
+      });
+
+      const job = (await res.json().catch(() => ({}))) as { job_id?: string; detail?: string; error?: string };
+      if (!res.ok || !job.job_id) {
+        appendConsole([`>> Submit error: ${job.error || job.detail || res.statusText}`]);
+        return;
+      }
+
+      appendConsole([`>> Job ${job.job_id} created. Waiting for result…`]);
+
+      const jobId = job.job_id;
+      const pollStart = Date.now();
+      const pollTimeoutMs = 45000;
+
+      while (Date.now() - pollStart < pollTimeoutMs) {
+        // eslint-disable-next-line no-await-in-loop
+        const pr = await fetch(`${api}/api/v1/practice-problems/run-code/${encodeURIComponent(jobId)}`, {
+          method: "GET",
+          headers: { ...headers },
+        });
+
+        const pj = (await pr.json().catch(() => ({}))) as {
+          state?: string;
+          result?: {
+            status?: string;
+            execution_time?: string;
+            memory_used?: string;
+            hints?: string;
+          };
+          error?: string;
+        };
+
+        if (pr.ok && pj.state === "done" && pj.result?.status) {
+          const result = pj.result;
+
+          appendConsole([
+            `>> Result: ${result.status}`,
+            `>> Time: ${result.execution_time || "0 ms"} · Memory: ${result.memory_used || "0 KB"}`,
+          ]);
+          if (result.hints) appendConsole([`>> Hint: ${result.hints}`]);
+
+          setLastRunMeta({
+            status: result.status,
+            execution_time: result.execution_time,
+            memory_used: result.memory_used,
+            hints: result.hints,
+          });
+
+          if (result.status === "Accepted") {
+            const passed = Object.fromEntries(
+              testCasesState.map((c) => [c.id, "pass"] as const)
+            ) as Record<string, "idle" | "pass" | "fail">;
+            setCaseStatus(passed);
+            setSolved(true);
+            localStorage.setItem(solvedKey, "1");
+          } else {
+            const failed = Object.fromEntries(
+              testCasesState.map((c) => [c.id, "fail"] as const)
+            ) as Record<string, "idle" | "pass" | "fail">;
+            setCaseStatus(failed);
+            setSolved(false);
+          }
+
+          setServerSubmissionsRefreshKey((k) => k + 1);
+          return;
+        }
+
+        if (!pr.ok) {
+          appendConsole([`>> Poll error: ${pj.error || pr.statusText}`]);
+          return;
+        }
+
+        if (pj.state === "error") {
+          appendConsole([`>> Job failed: ${pj.error || "Unknown error"}`]);
+          return;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        await new Promise((r) => setTimeout(r, 1200));
+      }
+
+      appendConsole([">> Submit timeout."]);
+    } finally {
+      setSubmitBusy(false);
     }
-    setSolved(true);
-    appendConsole([">> Submit: saved to this browser.", `>> Language: ${lang}`, ">> Full grading requires a connected judge."]);
   }
 
   const diff = problem ? difficultyStyle(problem.difficulty) : difficultyStyle("Easy");
 
   return (
-    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden rounded-lg border border-zinc-800 bg-background-dark p-4">
+    <div
+      className={[
+        "flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-background-dark",
+        isFullScreen ? "fixed inset-0 z-50 rounded-none border-0 p-2 md:p-4" : "rounded-lg border border-zinc-800 p-4",
+      ].join(" ")}
+    >
       {/* Top chrome */}
       <div className="shrink-0 flex items-center gap-3 px-3 py-2 border-b border-zinc-800 bg-[#0c0c0f]">
         <button
@@ -609,6 +862,19 @@ export default function PracticeSolvePage() {
             {problem.title}
           </p>
         )}
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setIsFullScreen((v) => !v)}
+            className="inline-flex items-center gap-2 h-8 px-3 rounded-lg text-sm font-bold border border-zinc-700 bg-zinc-800/30 text-zinc-100 hover:bg-zinc-700 hover:border-zinc-600 transition-colors shrink-0"
+            aria-pressed={isFullScreen}
+          >
+            <span className="material-symbols-outlined text-base">
+              {isFullScreen ? "fullscreen_exit" : "fullscreen"}
+            </span>
+            {isFullScreen ? "Exit" : "Full"}
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -627,6 +893,7 @@ export default function PracticeSolvePage() {
           <p className="text-zinc-300 font-semibold">Problem not found.</p>
         </div>
       ) : (
+        <>
         <div
           ref={mainRowRef}
           className="flex flex-1 min-h-0 flex-col overflow-hidden lg:flex-row"
@@ -757,8 +1024,29 @@ export default function PracticeSolvePage() {
 
               {leftTab === "submissions" && (
                 <div className="space-y-3">
-                  <h2 className="text-sm font-bold text-zinc-100">Your submissions</h2>
-                  {submissions.length === 0 ? (
+                  <h2 className="text-sm font-bold text-zinc-100">Recent submissions</h2>
+                  {serverSubmissionsLoading ? (
+                    <p className="text-sm text-zinc-500">Loading submissions…</p>
+                  ) : serverSubmissions.length > 0 ? (
+                    <ul className="space-y-2">
+                      {serverSubmissions.map((s) => (
+                        <li
+                          key={s.id}
+                          className="rounded-lg border border-zinc-800 px-3 py-2 text-xs font-mono text-zinc-300"
+                        >
+                          <span className="text-zinc-500">
+                            {s.created_at ? new Date(s.created_at).toLocaleString() : ""}
+                          </span>
+                          <span className="mx-2">·</span>
+                          {s.language}
+                          <span className="mx-2">·</span>
+                          Attempt {s.attempt}
+                          <span className="mx-2">·</span>
+                          {s.status}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : submissions.length === 0 ? (
                     <p className="text-sm text-zinc-500">No submissions yet. Submit from the editor to record an attempt.</p>
                   ) : (
                     <ul className="space-y-2">
@@ -811,8 +1099,9 @@ export default function PracticeSolvePage() {
           )}
 
           {/* Right: editor + testcase / results (vertical split adjustable) */}
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-zinc-950">
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 border-b border-zinc-800 bg-black">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-row bg-zinc-950">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-2 py-1.5 border-b border-zinc-800 bg-black">
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="material-symbols-outlined text-orange-400 text-lg shrink-0">code</span>
                 <span className="text-sm font-semibold text-zinc-200 truncate px-2.5 py-1 rounded-lg bg-zinc-800/80 border border-zinc-700">
@@ -829,6 +1118,21 @@ export default function PracticeSolvePage() {
                 </select>
               </div>
               <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAiOpen((o) => !o)}
+                  aria-expanded={aiOpen}
+                  aria-controls="practice-ide-ai-panel"
+                  className={[
+                    "inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border text-xs font-bold transition-colors",
+                    aiOpen
+                      ? "border-orange-500/50 bg-orange-500/10 text-orange-200"
+                      : "border-zinc-600 text-zinc-200 hover:bg-zinc-700 hover:border-zinc-500",
+                  ].join(" ")}
+                >
+                  <span className="material-symbols-outlined text-base">smart_toy</span>
+                  AI
+                </button>
                 <button
                   type="button"
                   onClick={resetTemplate}
@@ -851,23 +1155,24 @@ export default function PracticeSolvePage() {
                 <button
                   type="button"
                   onClick={submitCode}
-                  className="inline-flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-bold text-white shadow-[0_4px_16px_-2px_rgba(255,122,26,0.5)] hover:brightness-110 transition-all"
+                  disabled={runBusy || submitBusy}
+                  className="inline-flex items-center gap-1.5 h-8 px-4 rounded-lg text-xs font-bold text-white shadow-[0_4px_16px_-2px_rgba(255,122,26,0.5)] hover:brightness-110 transition-all disabled:pointer-events-none disabled:opacity-45"
                   style={{ backgroundColor: primary }}
                 >
                   <span className="material-symbols-outlined text-base">cloud_upload</span>
-                  Submit
+                  {submitBusy ? "Submitting…" : "Submit"}
                 </button>
               </div>
-            </div>
+              </div>
 
-            <div ref={rightColRef} className="flex min-h-0 flex-1 flex-col">
+              <div ref={rightColRef} className="flex min-h-0 flex-1 flex-col">
               {(() => {
                 const editorGrow = Math.max(22, Math.min(78, Math.round(editorFrac * 100)));
                 const bottomGrow = 100 - editorGrow;
                 return (
                   <>
                     <div
-                      className="flex min-h-0 flex-col border-b border-zinc-800"
+                      className="flex min-h-0 flex-col border-b border-zinc-800 bg-[#1e1e1e]"
                       style={{
                         flexGrow: editorGrow,
                         flexShrink: 1,
@@ -875,23 +1180,12 @@ export default function PracticeSolvePage() {
                         minHeight: 160,
                       }}
                     >
-                      <div className="relative min-h-0 w-full flex-1">
-                        <pre
-                          ref={codeHighlightRef}
-                          aria-hidden="true"
-                          className="absolute inset-0 min-h-0 w-full overflow-auto whitespace-pre p-4 font-mono text-[13px] leading-relaxed text-zinc-100 bg-zinc-950 pointer-events-none"
-                          dangerouslySetInnerHTML={{ __html: highlightCode(code, lang) }}
-                        />
-                        <textarea
-                          ref={codeTextareaRef}
-                          value={code}
-                          onChange={(e) => onChangeCode(e.target.value)}
-                          onScroll={onCodeScroll}
-                          spellCheck={false}
-                          className="absolute inset-0 min-h-0 w-full resize-none bg-transparent p-4 font-mono text-[13px] leading-relaxed text-transparent caret-orange-300 outline-none selection:bg-primary/30"
-                          aria-label="Code editor"
-                        />
-                      </div>
+                      <PracticeMonacoEditor
+                        value={code}
+                        language={lang}
+                        onChange={onChangeCode}
+                        className="min-h-0 flex-1"
+                      />
                     </div>
 
                     <div
@@ -1040,6 +1334,43 @@ export default function PracticeSolvePage() {
 
                       {ideBottomTab === "result" && (
                         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 font-mono text-[11px] leading-relaxed text-zinc-400">
+                          {lastRunMeta && (
+                            <div className="mb-3 flex flex-col gap-2">
+                              <div className="flex flex-wrap items-center gap-2">
+                                {lastRunMeta.status && (
+                                  <span
+                                    className="inline-flex items-center rounded-full border border-zinc-700 bg-black/30 px-2.5 py-1 text-[11px] font-bold text-zinc-200"
+                                  >
+                                    <span className="material-symbols-outlined text-base" style={{ marginRight: 4 }}>
+                                      verified
+                                    </span>
+                                    {lastRunMeta.status}
+                                  </span>
+                                )}
+                                {lastRunMeta.execution_time && (
+                                  <span className="rounded-full border border-zinc-700 bg-black/30 px-2.5 py-1 text-[11px] font-bold">
+                                    Time: <span className="text-zinc-200">{lastRunMeta.execution_time}</span>
+                                  </span>
+                                )}
+                                {lastRunMeta.memory_used && (
+                                  <span className="rounded-full border border-zinc-700 bg-black/30 px-2.5 py-1 text-[11px] font-bold">
+                                    Memory: <span className="text-zinc-200">{lastRunMeta.memory_used}</span>
+                                  </span>
+                                )}
+                              </div>
+
+                              {lastRunMeta.hints && (
+                                <div className="rounded-xl border border-orange-500/15 bg-orange-500/5 p-3 text-[11px] text-zinc-300">
+                                  <div className="mb-1 flex items-center gap-2 text-orange-400 font-bold">
+                                    <span className="material-symbols-outlined text-base">lightbulb</span>
+                                    Hint
+                                  </div>
+                                  <div className="whitespace-pre-wrap">{lastRunMeta.hints}</div>
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           {consoleLines.map((line, i) => {
                             const isErr = line.startsWith("Error") || line.startsWith("TypeError");
                             return (
@@ -1076,9 +1407,31 @@ export default function PracticeSolvePage() {
                   </>
                 );
               })()}
+              </div>
             </div>
+            {isWideLayout && aiOpen && (
+              <div id="practice-ide-ai-panel" className="hidden min-h-0 shrink-0 lg:flex">
+                <PracticeIdeAiPanel
+                  variant="sidebar"
+                  problem={problem}
+                  language={lang}
+                  code={code}
+                  onClose={() => setAiOpen(false)}
+                />
+              </div>
+            )}
           </section>
         </div>
+        {!isWideLayout && aiOpen && (
+          <PracticeIdeAiPanel
+            variant="sheet"
+            problem={problem}
+            language={lang}
+            code={code}
+            onClose={() => setAiOpen(false)}
+          />
+        )}
+        </>
       )}
     </div>
   );

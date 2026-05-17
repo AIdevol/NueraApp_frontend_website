@@ -91,8 +91,7 @@ export default function DashboardHomePage() {
       </section>
 
       {/* Current module CTA */}
-      {/* Current module CTA */}
-<section className="relative rounded-2xl glassmorphism shadow-lg">
+      <section className="relative rounded-2xl glassmorphism shadow-lg">
   <div className="absolute top-0 right-0 w-96 h-96 bg-primary/10 rounded-full blur-3xl -mr-32 -mt-32 pointer-events-none" />
   <div className="absolute bottom-0 left-0 w-64 h-64 bg-primary/5 rounded-full blur-2xl -ml-20 -mb-20 pointer-events-none" />
 
@@ -191,7 +190,7 @@ export default function DashboardHomePage() {
     </div>
 
   </div>
-</section>
+      </section>
 
       {/* Quick links */}
       <section className="flex flex-col gap-4">

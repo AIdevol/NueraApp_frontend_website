@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { adminAuthHeaders, hasAdminSession } from "@/lib/adminApi";
 import { getPublicApiUrl } from "@/lib/publicUrl";
 import { primary } from "@/lib/theme";
 
@@ -48,6 +49,15 @@ export default function CreatePracticeProblemPage() {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [accessChecked, setAccessChecked] = useState(false);
+
+  useEffect(() => {
+    if (!hasAdminSession()) {
+      router.replace("/dashboard/practice");
+      return;
+    }
+    setAccessChecked(true);
+  }, [router]);
 
   const tags = useMemo(() => {
     return tagsText
@@ -77,7 +87,7 @@ export default function CreatePracticeProblemPage() {
 
       const res = await fetch(`${getPublicApiUrl()}/api/v1/practice-problems`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: adminAuthHeaders(),
         body: JSON.stringify(payload),
       });
       const data = await res.json().catch(() => ({}));
@@ -93,6 +103,18 @@ export default function CreatePracticeProblemPage() {
     } finally {
       setLoading(false);
     }
+  }
+
+  if (!accessChecked) {
+    return (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-slate-500 dark:text-slate-400">
+        <div
+          className="h-10 w-10 animate-spin rounded-full border-2 border-slate-300 dark:border-slate-600"
+          style={{ borderTopColor: primary }}
+        />
+        <p className="text-sm">Checking access…</p>
+      </div>
+    );
   }
 
   return (

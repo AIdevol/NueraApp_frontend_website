@@ -7,6 +7,29 @@ export function getAdminToken(): string | null {
   return localStorage.getItem(ADMIN_TOKEN_KEY);
 }
 
+/** Decode JWT payload (no signature verification — UI gating only). */
+function decodeJwtPayload(token: string): Record<string, unknown> | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    let base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = base64.length % 4;
+    if (pad) base64 += "=".repeat(4 - pad);
+    const json = atob(base64);
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+/** True when the admin dashboard JWT is stored and declares `role: "admin"`. */
+export function hasAdminSession(): boolean {
+  const t = getAdminToken();
+  if (!t) return false;
+  const payload = decodeJwtPayload(t);
+  return payload?.role === "admin";
+}
+
 export function setAdminToken(token: string | null) {
   if (typeof window === "undefined") return;
   if (token) localStorage.setItem(ADMIN_TOKEN_KEY, token);

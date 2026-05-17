@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+import { hasAdminSession } from "@/lib/adminApi";
 import { getPublicApiUrl } from "@/lib/publicUrl";
 import { primary } from "@/lib/theme";
 
@@ -26,28 +27,23 @@ export default function PracticeProblemPage() {
   const [problem, setProblem] = useState<PracticeProblem | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
+    setIsAdmin(hasAdminSession());
     async function load() {
       setLoading(true);
       setError("");
       try {
         const api = getPublicApiUrl();
-        // Try custom problems first; if not found, fall back to library.
-        const res1 = await fetch(`${api}/api/v1/practice-problems/${encodeURIComponent(problemId)}`);
-        if (res1.ok) {
-          const data1 = await res1.json().catch(() => ({}));
-          setProblem(data1 as PracticeProblem);
-          return;
-        }
-        const res2 = await fetch(`${api}/api/v1/problem-library/dsa/${encodeURIComponent(problemId)}`);
-        const data2 = await res2.json().catch(() => ({}));
-        if (!res2.ok) {
-          setError((data2 as any).detail || "Failed to load problem");
+        const res = await fetch(`${api}/api/v1/practice-problems/${encodeURIComponent(problemId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          setError((data as { detail?: string }).detail || "Failed to load problem");
           setProblem(null);
           return;
         }
-        setProblem(data2 as PracticeProblem);
+        setProblem(data as PracticeProblem);
       } catch {
         setError("Connection error.");
         setProblem(null);
@@ -86,14 +82,16 @@ export default function PracticeProblemPage() {
             </span>
             Solve in IDE
           </Link>
-          <Link
-            href="/dashboard/practice/create"
-            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl font-semibold text-white hover:opacity-90 text-sm"
-            style={{ backgroundColor: primary }}
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            Create
-          </Link>
+          {isAdmin ? (
+            <Link
+              href="/dashboard/practice/create"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl font-semibold text-white hover:opacity-90 text-sm"
+              style={{ backgroundColor: primary }}
+            >
+              <span className="material-symbols-outlined text-lg">add</span>
+              Create
+            </Link>
+          ) : null}
         </div>
       </div>
 

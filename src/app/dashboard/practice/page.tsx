@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { hasAdminSession } from "@/lib/adminApi";
 import { getPublicApiUrl } from "@/lib/publicUrl";
 import { primary } from "@/lib/theme";
 
@@ -21,6 +22,7 @@ export default function PracticePage() {
   const [problems, setProblems] = useState<PracticeProblem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const counts = useMemo(() => {
     const c = { total: problems.length, easy: 0, medium: 0, hard: 0 };
@@ -34,38 +36,26 @@ export default function PracticePage() {
   }, [problems]);
 
   useEffect(() => {
+    setIsAdmin(hasAdminSession());
     async function load() {
       setLoading(true);
       setError("");
       try {
         const api = getPublicApiUrl();
 
-        const [libRes, customRes] = await Promise.all([
-          fetch(`${api}/api/v1/problem-library/dsa`),
-          fetch(`${api}/api/v1/practice-problems`),
-        ]);
-
-        const libJson = (await libRes.json().catch(() => ({}))) as { problems?: PracticeProblem[]; detail?: string };
-        const customJson = (await customRes.json().catch(() => ({}))) as { problems?: PracticeProblem[]; detail?: string };
+        const customRes = await fetch(`${api}/api/v1/practice-problems`);
+        const customJson = (await customRes.json().catch(() => ({}))) as {
+          problems?: PracticeProblem[];
+          detail?: string;
+        };
 
         const customProblems = customRes.ok ? (customJson.problems ?? []) : [];
-        const libProblems = libRes.ok ? (libJson.problems ?? []) : [];
+        setProblems(customProblems);
 
-        // Custom / cohort problems first, then built-in library
-        const merged = [...customProblems, ...libProblems];
-        setProblems(merged);
-
-        const parts: string[] = [];
         if (!customRes.ok) {
-          parts.push(
-            customJson.detail || `Custom problems unavailable (${customRes.status}). Is the API running?`
-          );
-        }
-        if (!libRes.ok) {
-          parts.push(libJson.detail || `Built-in library unavailable (${libRes.status}).`);
-        }
-        if (merged.length === 0) {
-          setError(parts.join(" ") || "No problems to display.");
+          setError(customJson.detail || `Problems unavailable (${customRes.status}). Is the API running?`);
+        } else if (customProblems.length === 0) {
+          setError("");
         } else {
           setError("");
         }
@@ -91,19 +81,21 @@ export default function PracticePage() {
             Practice Problems
           </h1>
           <p className="mt-1 text-zinc-400 text-sm max-w-2xl">
-            Solve DSA problems by topic and difficulty. Create your own problems for your cohort.
+            Practice problems are created by admins. Use the IDE to solve, run, and submit locally.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Link
-            href="/dashboard/practice/create"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-white hover:opacity-90"
-            style={{ backgroundColor: primary }}
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            Create problem
-          </Link>
-        </div>
+        {isAdmin ? (
+          <div className="flex gap-2">
+            <Link
+              href="/dashboard/practice/create"
+              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-white hover:opacity-90"
+              style={{ backgroundColor: primary }}
+            >
+              <span className="material-symbols-outlined text-lg">add</span>
+              Create problem
+            </Link>
+          </div>
+        ) : null}
       </div>
 
       <section className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
@@ -144,16 +136,20 @@ export default function PracticePage() {
           </span>
           <h2 className="text-xl font-semibold text-slate-800 dark:text-slate-200">No problems yet</h2>
           <p className="mt-2 text-slate-500 dark:text-slate-400 text-sm max-w-md">
-            Create your first practice problem to start a problem set.
+            {isAdmin
+              ? "Create a problem to seed the library, or use the admin Practice panel for the same workflow."
+              : "Ask an admin to publish problems here. Problem creation is limited to administrators."}
           </p>
-          <Link
-            href="/dashboard/practice/create"
-            className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white hover:opacity-90"
-            style={{ backgroundColor: primary }}
-          >
-            <span className="material-symbols-outlined text-lg">add</span>
-            Create problem
-          </Link>
+          {isAdmin ? (
+            <Link
+              href="/dashboard/practice/create"
+              className="mt-5 inline-flex items-center gap-2 px-5 py-2.5 rounded-xl font-semibold text-white hover:opacity-90"
+              style={{ backgroundColor: primary }}
+            >
+              <span className="material-symbols-outlined text-lg">add</span>
+              Create problem
+            </Link>
+          ) : null}
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

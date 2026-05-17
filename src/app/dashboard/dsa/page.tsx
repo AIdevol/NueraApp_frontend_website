@@ -34,7 +34,7 @@ export default function DSAPage() {
   const [difficulties, setDifficulties] = useState({ Easy: 0, Medium: 0, Hard: 0 });
 
   useEffect(() => {
-    fetch(`${getPublicApiUrl()}/api/v1/problem-library/dsa`)
+    fetch(`${getPublicApiUrl()}/api/v1/practice-problems`)
       .then((r) => (r.ok ? r.json() : null))
       .then((data) => {
         if (!data?.problems) return;
