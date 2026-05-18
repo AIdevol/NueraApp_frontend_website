@@ -394,3 +394,157 @@ body {
     opacity: 0.7;
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Landing page — hero fade-up + float + scroll reveal (marketing reference) */
+/* -------------------------------------------------------------------------- */
+
+@keyframes landing-fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(30px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes landing-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+.landing-hero-fade-up {
+  opacity: 0;
+  animation: landing-fade-in-up 1s ease-out forwards;
+  animation-delay: var(--landing-delay, 0s);
+}
+
+.landing-hero-float {
+  animation: landing-float 8s ease-in-out infinite;
+}
+
+.landing-reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(40px);
+  transition:
+    opacity 0.8s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.landing-reveal-on-scroll.landing-reveal-active {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.landing-reveal-stagger-1 {
+  transition-delay: 0.1s;
+}
+.landing-reveal-stagger-2 {
+  transition-delay: 0.2s;
+}
+.landing-reveal-stagger-3 {
+  transition-delay: 0.3s;
+}
+
+.landing-text-glow {
+  text-shadow: 0 0 20px rgba(255, 107, 0, 0.5);
+}
+
+.landing-faq-answer {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 0.35s ease-out,
+    opacity 0.3s ease-out,
+    padding 0.3s ease-out;
+  padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.landing-faq-open .landing-faq-answer {
+  max-height: 480px;
+  opacity: 1;
+  padding-top: 0.5rem;
+  padding-bottom: 1.25rem;
+}
+
+.landing-faq-icon {
+  transition: transform 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.landing-faq-open .landing-faq-icon {
+  transform: rotate(45deg);
+}
+
+.landing-glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.landing-glass-panel:hover {
+  border-color: rgba(255, 107, 0, 0.45);
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-2px) scale(1.02);
+  box-shadow: 0 20px 50px rgba(255, 107, 0, 0.15);
+}
+
+.landing-curriculum-tile {
+  transition: all 0.3s ease;
+}
+
+.landing-curriculum-tile:hover {
+  border-color: rgba(255, 107, 0, 0.5) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+  transform: translateY(-4px);
+}
+
+.landing-glow-badge {
+  box-shadow: 0 0 40px -10px rgba(255, 107, 0, 0.2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero-fade-up {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+  .landing-hero-float {
+    animation: none;
+  }
+  .landing-reveal-on-scroll {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+  .landing-reveal-stagger-1,
+  .landing-reveal-stagger-2,
+  .landing-reveal-stagger-3 {
+    transition-delay: 0s;
+  }
+  .landing-faq-answer {
+    transition: none;
+  }
+  .landing-faq-open .landing-faq-answer {
+    max-height: none;
+  }
+  .landing-glass-panel:hover,
+  .landing-curriculum-tile:hover {
+    transform: none;
+    box-shadow: none;
+  }
+}

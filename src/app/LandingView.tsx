@@ -6,7 +6,6 @@ import {
   useRef,
   type CSSProperties,
   type ReactNode,
-  type RefObject,
 } from "react";
 import Image from "next/image";
 
@@ -117,41 +116,24 @@ const FAQ = [
   { q: "What makes NeuraApp different from random tutorials?", a: "Curriculum sequencing, hands-on labs, portfolio-ready projects, and progress signals in one place — so you spend time learning instead of hunting for what to do next." },
 ];
 
-function useInView(threshold = 0.15): [RefObject<HTMLDivElement | null>, boolean] {
-  const ref = useRef<HTMLDivElement | null>(null);
-  const [visible, setVisible] = useState(false);
+function useLandingReveal(rootRef: { current: HTMLDivElement | null }) {
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (entry?.isIntersecting) setVisible(true);
+    const root = rootRef.current;
+    if (!root) return;
+    const nodes = root.querySelectorAll(".landing-reveal-on-scroll");
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("landing-reveal-active");
+          }
+        });
       },
-      { threshold }
+      { threshold: 0.1, rootMargin: "0px 0px -50px 0px" }
     );
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, [threshold]);
-  return [ref, visible];
-}
-
-function FadeIn({
-  children,
-  delay = 0,
-  className = "",
-}: {
-  children: ReactNode;
-  delay?: number;
-  className?: string;
-}) {
-  const [ref, visible] = useInView();
-  return (
-    <div ref={ref} className={className} style={{
-      opacity: visible ? 1 : 0,
-      transform: visible ? "translateY(0)" : "translateY(28px)",
-      transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`
-    }}>{children}</div>
-  );
+    nodes.forEach((n) => observer.observe(n));
+    return () => observer.disconnect();
+  }, [rootRef]);
 }
 
 function GlowOrb({
@@ -176,12 +158,25 @@ function GlowOrb({
 
 function Tag({ children }: { children: ReactNode }) {
   return (
-    <span style={{
-      display: "inline-flex", alignItems: "center", gap: 6,
-      background: "rgba(255,107,0,0.12)", border: "1px solid rgba(255,107,0,0.3)",
-      color: "#FF8C35", fontSize: 11, fontWeight: 700, letterSpacing: "0.14em",
-      padding: "5px 14px", borderRadius: 100, textTransform: "uppercase"
-    }}>{children}</span>
+    <span
+      className="landing-glow-badge"
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 6,
+        background: "rgba(255,107,0,0.12)",
+        border: "1px solid rgba(255,107,0,0.3)",
+        color: "#FF8C35",
+        fontSize: 11,
+        fontWeight: 700,
+        letterSpacing: "0.14em",
+        padding: "5px 14px",
+        borderRadius: 100,
+        textTransform: "uppercase",
+      }}
+    >
+      {children}
+    </span>
   );
 }
 
@@ -268,9 +263,21 @@ function SectionLabel({ num, text }: { num: string; text: string }) {
 }
 
 export default function LandingView() {
-  const [openFaq, setOpenFaq] = useState<number | null>(0);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [openFaqs, setOpenFaqs] = useState<Set<number>>(() => new Set());
   const [activeTestimonial, setActiveTestimonial] = useState(0);
   const [scrolled, setScrolled] = useState(false);
+
+  useLandingReveal(rootRef);
+
+  const toggleFaq = (index: number) => {
+    setOpenFaqs((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 16);
@@ -287,7 +294,7 @@ export default function LandingView() {
   const t = TESTIMONIALS[activeTestimonial];
 
   return (
-    <div style={{ minHeight: "100vh", background: "#080808", color: "#E8E6E0", fontFamily: "'Sora', 'Plus Jakarta Sans', system-ui, sans-serif", overflowX: "hidden" }}>
+    <div ref={rootRef} style={{ minHeight: "100vh", background: "#080808", color: "#E8E6E0", fontFamily: "'Sora', 'Plus Jakarta Sans', system-ui, sans-serif", overflowX: "hidden" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -296,8 +303,7 @@ export default function LandingView() {
         ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
         .nav-blur { background: rgba(8,8,8,0.82) !important; backdrop-filter: blur(20px) !important; }
         @keyframes pulse-ring { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.5); opacity: 0; } }
-        @keyframes float { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
-        @keyframes gradient-shift { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+        @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         @keyframes marquee { from { transform: translateX(0); } to { transform: translateX(-50%); } }
         .marquee-track { display: flex; animation: marquee 28s linear infinite; width: max-content; }
@@ -340,6 +346,27 @@ export default function LandingView() {
 
         {/* HERO */}
         <section className="grid-line" style={{ position: "relative", minHeight: "calc(100vh - 64px)", display: "flex", alignItems: "center", justifyContent: "center", overflow: "hidden", padding: "80px 40px" }}>
+          {/* Floating ambience (reference: hero neural bg + float) */}
+          <div style={{ position: "absolute", inset: 0, zIndex: 0, pointerEvents: "none" }} aria-hidden>
+            <div
+              className="landing-hero-float"
+              style={{
+                position: "absolute",
+                inset: "-10% -20% 0 -20%",
+                opacity: 0.22,
+                background:
+                  "radial-gradient(ellipse 70% 55% at 50% 40%, rgba(255,107,0,0.35) 0%, transparent 55%), radial-gradient(ellipse 50% 40% at 80% 60%, rgba(255,140,60,0.12) 0%, transparent 50%)",
+                filter: "blur(2px)",
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: "linear-gradient(to top, #080808 0%, rgba(8,8,8,0.88) 45%, transparent 100%)",
+              }}
+            />
+          </div>
           <GlowOrb x="10%" y="20%" size="600px" opacity={0.08} />
           <GlowOrb x="60%" y="60%" size="500px" opacity={0.06} />
           {/* Rotating ring */}
@@ -349,28 +376,28 @@ export default function LandingView() {
             </div>
           </div>
           <div style={{ position: "relative", zIndex: 1, maxWidth: 860, textAlign: "center" }}>
-            <FadeIn>
+            <div className="landing-hero-fade-up" style={{ ["--landing-delay" as string]: "0s" } as CSSProperties}>
               <Tag>⚡ Intelligence in Motion</Tag>
-            </FadeIn>
-            <FadeIn delay={0.1}>
+            </div>
+            <div className="landing-hero-fade-up" style={{ ["--landing-delay" as string]: "0.2s" } as CSSProperties}>
               <h1 style={{ fontSize: "clamp(48px, 7vw, 88px)", fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.03em", color: "#fff", margin: "28px 0 0" }}>
                 Learn Any Skill
                 <br />
-                <span className="gradient-text">Your Way.</span>
+                <span className="gradient-text landing-text-glow">Your Way.</span>
               </h1>
-            </FadeIn>
-            <FadeIn delay={0.2}>
+            </div>
+            <div className="landing-hero-fade-up" style={{ ["--landing-delay" as string]: "0.4s" } as CSSProperties}>
               <p style={{ fontSize: 18, color: "#888", lineHeight: 1.7, maxWidth: 560, margin: "24px auto 0" }}>
                 Accelerate your growth with personalized learning paths, hands-on labs, and real portfolio projects.
               </p>
-            </FadeIn>
-            <FadeIn delay={0.3}>
+            </div>
+            <div className="landing-hero-fade-up" style={{ ["--landing-delay" as string]: "0.6s" } as CSSProperties}>
               <div style={{ display: "flex", gap: 14, justifyContent: "center", marginTop: 40, flexWrap: "wrap" }}>
                 <Btn href="/register">Start Your Journey →</Btn>
                 <Btn href="#platform" variant="ghost">▷ See How It Works</Btn>
               </div>
-            </FadeIn>
-            <FadeIn delay={0.4}>
+            </div>
+            <div className="landing-hero-fade-up" style={{ ["--landing-delay" as string]: "0.8s" } as CSSProperties}>
               <div style={{ display: "flex", gap: 40, justifyContent: "center", marginTop: 64, flexWrap: "wrap" }}>
                 {STATS.map(s => (
                   <div key={s.label} style={{ textAlign: "center" }}>
@@ -379,13 +406,13 @@ export default function LandingView() {
                   </div>
                 ))}
               </div>
-            </FadeIn>
+            </div>
           </div>
         </section>
 
         {/* PATHWAYS */}
         <section id="roadmap" style={{ padding: "100px 40px", maxWidth: 1200, margin: "0 auto" }}>
-          <FadeIn>
+          <div className="landing-reveal-on-scroll">
             <SectionLabel num="01" text="Pathways" />
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 48, flexWrap: "wrap", gap: 20 }}>
               <h2 style={{ fontSize: "clamp(32px, 4vw, 52px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1 }}>
@@ -393,11 +420,14 @@ export default function LandingView() {
               </h2>
               <p style={{ color: "#666", fontSize: 15, maxWidth: 320, lineHeight: 1.7 }}>Select a pathway and get a sequenced roadmap built around your goals.</p>
             </div>
-          </FadeIn>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 20 }}>
             {PATHWAYS.map((p, i) => (
-              <FadeIn key={p.title} delay={i * 0.1}>
-                <GlassCard className="card-hover" style={{ padding: "36px 32px", height: "100%", position: "relative", overflow: "hidden", cursor: "pointer" }}>
+              <div
+                key={p.title}
+                className={`landing-reveal-on-scroll landing-reveal-stagger-${(i % 3) + 1}`}
+              >
+                <GlassCard className="card-hover landing-glass-panel" style={{ padding: "36px 32px", height: "100%", position: "relative", overflow: "hidden", cursor: "pointer" }}>
                   <div style={{ position: "absolute", top: 0, right: 0, width: 200, height: 200, background: `radial-gradient(circle at top right, rgba(255,107,0,0.08), transparent)`, pointerEvents: "none" }} />
                   <div style={{ fontSize: 40, marginBottom: 20, color: primary, lineHeight: 1 }}>{p.icon}</div>
                   <h3 style={{ fontSize: 22, fontWeight: 700, color: "#fff", marginBottom: 12, letterSpacing: "-0.01em" }}>{p.title}</h3>
@@ -406,7 +436,7 @@ export default function LandingView() {
                     Explore Path <span style={{ fontSize: 16 }}>→</span>
                   </div>
                 </GlassCard>
-              </FadeIn>
+              </div>
             ))}
           </div>
         </section>
@@ -426,7 +456,7 @@ export default function LandingView() {
 
         {/* CURRICULUM */}
         <section id="curriculum" style={{ padding: "100px 40px", maxWidth: 1200, margin: "0 auto" }}>
-          <FadeIn>
+          <div className="landing-reveal-on-scroll">
             <SectionLabel num="02" text="Curriculum" />
             <div style={{ marginBottom: 48 }}>
               <h2 style={{ fontSize: "clamp(32px, 4vw, 52px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1, marginBottom: 16 }}>
@@ -434,11 +464,11 @@ export default function LandingView() {
               </h2>
               <p style={{ color: "#666", fontSize: 15, maxWidth: 420, lineHeight: 1.7 }}>Spanning tech, design, business, and beyond. Every track includes theory, hands-on labs, and real-world projects.</p>
             </div>
-          </FadeIn>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
             {CURRICULUM.map((topic, i) => (
-              <FadeIn key={topic.name} delay={i * 0.04}>
-                <div className="card-hover" style={{
+              <div key={topic.name} className={`landing-reveal-on-scroll landing-reveal-stagger-${(i % 3) + 1}`}>
+                <div className="card-hover landing-curriculum-tile" style={{
                   background: "rgba(255,255,255,0.02)", border: "1px solid rgba(255,255,255,0.06)",
                   borderRadius: 10, padding: "16px 20px", display: "flex", alignItems: "center", gap: 14, cursor: "pointer"
                 }}>
@@ -450,7 +480,7 @@ export default function LandingView() {
                     <div style={{ fontSize: 10, color: "#555", marginTop: 2, textTransform: "uppercase", letterSpacing: "0.08em" }}>{topic.cat}</div>
                   </div>
                 </div>
-              </FadeIn>
+              </div>
             ))}
           </div>
         </section>
@@ -458,15 +488,15 @@ export default function LandingView() {
         {/* HOW IT WORKS */}
         <section id="platform" style={{ padding: "100px 40px", background: "rgba(255,107,0,0.02)", borderTop: "1px solid rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
           <div style={{ maxWidth: 1200, margin: "0 auto" }}>
-            <FadeIn>
+            <div className="landing-reveal-on-scroll">
               <div style={{ textAlign: "center", marginBottom: 64 }}>
                 <SectionLabel num="03" text="Process" />
                 <h2 style={{ fontSize: "clamp(32px, 4vw, 52px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1 }}>How It Works</h2>
               </div>
-            </FadeIn>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 0 }}>
               {PROCESS.map((step, i) => (
-                <FadeIn key={step.title} delay={i * 0.1}>
+                <div key={step.title} className={`landing-reveal-on-scroll landing-reveal-stagger-${(i % 3) + 1}`}>
                   <div style={{ padding: "32px 28px", borderRight: i < 3 ? "1px solid rgba(255,255,255,0.05)" : "none", position: "relative" }}>
                     <div style={{
                       width: 48, height: 48, borderRadius: 12, border: "1px solid rgba(255,107,0,0.3)",
@@ -477,7 +507,7 @@ export default function LandingView() {
                     <p style={{ fontSize: 14, color: "#666", lineHeight: 1.7 }}>{step.desc}</p>
                     {i < 3 && <div style={{ position: "absolute", right: -12, top: "50%", transform: "translateY(-50%)", color: "rgba(255,107,0,0.3)", fontSize: 20, display: "none" }}>→</div>}
                   </div>
-                </FadeIn>
+                </div>
               ))}
             </div>
           </div>
@@ -485,7 +515,7 @@ export default function LandingView() {
 
         {/* FEATURES */}
         <section id="features" style={{ padding: "100px 40px", maxWidth: 1200, margin: "0 auto" }}>
-          <FadeIn>
+          <div className="landing-reveal-on-scroll">
             <div style={{ textAlign: "center", marginBottom: 64 }}>
               <SectionLabel num="04" text="Why NeuraApp" />
               <h2 style={{ fontSize: "clamp(32px, 4vw, 52px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1, marginBottom: 16 }}>
@@ -493,53 +523,51 @@ export default function LandingView() {
               </h2>
               <p style={{ color: "#666", fontSize: 15, maxWidth: 480, margin: "0 auto", lineHeight: 1.7 }}>A learning experience designed to keep momentum high and results visible.</p>
             </div>
-          </FadeIn>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
             {FEATURES.map((f, i) => (
-              <FadeIn key={f.title} delay={i * 0.08}>
+              <div key={f.title} className={`landing-reveal-on-scroll landing-reveal-stagger-${(i % 3) + 1}`}>
                 <GlassCard className="card-hover" style={{ padding: "28px 28px" }}>
                   <div style={{ fontSize: 28, color: primary, marginBottom: 16, lineHeight: 1 }}>{f.icon}</div>
                   <h3 style={{ fontSize: 17, fontWeight: 700, color: "#fff", marginBottom: 10, letterSpacing: "-0.01em" }}>{f.title}</h3>
                   <p style={{ fontSize: 13, color: "#666", lineHeight: 1.7 }}>{f.desc}</p>
                 </GlassCard>
-              </FadeIn>
+              </div>
             ))}
           </div>
         </section>
 
         {/* TESTIMONIALS */}
-        <section style={{ padding: "80px 40px", background: "rgba(0,0,0,0.4)", borderTop: "1px solid rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
+        <section className="landing-reveal-on-scroll" style={{ padding: "80px 40px", background: "rgba(0,0,0,0.4)", borderTop: "1px solid rgba(255,255,255,0.04)", borderBottom: "1px solid rgba(255,255,255,0.04)" }}>
           <div style={{ maxWidth: 800, margin: "0 auto", textAlign: "center" }}>
-            <FadeIn>
-              <SectionLabel num="05" text="Community" />
-              <div style={{ position: "relative", minHeight: 180 }}>
-                <p style={{ fontSize: "clamp(18px, 2.5vw, 24px)", color: "#ccc", lineHeight: 1.6, fontStyle: "italic", marginBottom: 32, transition: "opacity 0.4s" }}>
-                  "{t.quote}"
-                </p>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
-                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#000" }}>{t.initials}</div>
-                  <div style={{ textAlign: "left" }}>
-                    <div style={{ fontWeight: 700, color: "#fff", fontSize: 15 }}>{t.name}</div>
-                    <div style={{ color: "#666", fontSize: 13 }}>{t.role}</div>
-                  </div>
+            <SectionLabel num="05" text="Community" />
+            <div style={{ position: "relative", minHeight: 180 }}>
+              <p style={{ fontSize: "clamp(18px, 2.5vw, 24px)", color: "#ccc", lineHeight: 1.6, fontStyle: "italic", marginBottom: 32, transition: "opacity 0.4s" }}>
+                "{t.quote}"
+              </p>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 14 }}>
+                <div style={{ width: 44, height: 44, borderRadius: "50%", background: primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#000" }}>{t.initials}</div>
+                <div style={{ textAlign: "left" }}>
+                  <div style={{ fontWeight: 700, color: "#fff", fontSize: 15 }}>{t.name}</div>
+                  <div style={{ color: "#666", fontSize: 13 }}>{t.role}</div>
                 </div>
               </div>
-              <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 32 }}>
-                {TESTIMONIALS.map((_, i) => (
-                  <button key={i} onClick={() => setActiveTestimonial(i)} style={{
-                    width: i === activeTestimonial ? 28 : 8, height: 8, borderRadius: 4,
-                    background: i === activeTestimonial ? primary : "rgba(255,255,255,0.15)",
-                    border: "none", cursor: "pointer", transition: "all 0.3s", padding: 0
-                  }} />
-                ))}
-              </div>
-            </FadeIn>
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginTop: 32 }}>
+              {TESTIMONIALS.map((_, i) => (
+                <button key={i} type="button" onClick={() => setActiveTestimonial(i)} style={{
+                  width: i === activeTestimonial ? 28 : 8, height: 8, borderRadius: 4,
+                  background: i === activeTestimonial ? primary : "rgba(255,255,255,0.15)",
+                  border: "none", cursor: "pointer", transition: "all 0.3s", padding: 0
+                }} />
+              ))}
+            </div>
           </div>
         </section>
 
         {/* PRICING */}
         <section id="pricing" style={{ padding: "100px 40px", maxWidth: 1200, margin: "0 auto" }}>
-          <FadeIn>
+          <div className="landing-reveal-on-scroll">
             <div style={{ textAlign: "center", marginBottom: 64 }}>
               <SectionLabel num="06" text="Pricing" />
               <h2 style={{ fontSize: "clamp(32px, 4vw, 52px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1, marginBottom: 16 }}>
@@ -547,10 +575,10 @@ export default function LandingView() {
               </h2>
               <p style={{ color: "#666", fontSize: 15, lineHeight: 1.7 }}>Start free. Upgrade when you're ready.</p>
             </div>
-          </FadeIn>
+          </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))", gap: 16, alignItems: "start" }}>
             {PRICING.map((p, i) => (
-              <FadeIn key={p.name} delay={i * 0.1}>
+              <div key={p.name} className={`landing-reveal-on-scroll landing-reveal-stagger-${(i % 3) + 1}`}>
                 <GlassCard highlight={p.highlight} style={{ padding: "36px 28px", position: "relative", overflow: "hidden" }}>
                   {p.highlight && (
                     <div style={{ position: "absolute", top: 20, right: 20, background: "rgba(255,107,0,0.15)", color: primary, fontSize: 10, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", padding: "4px 12px", borderRadius: 100, border: "1px solid rgba(255,107,0,0.3)" }}>Popular</div>
@@ -576,42 +604,46 @@ export default function LandingView() {
                     {p.cta}
                   </Btn>
                 </GlassCard>
-              </FadeIn>
+              </div>
             ))}
           </div>
         </section>
 
         {/* FAQ */}
         <section style={{ padding: "80px 40px", maxWidth: 800, margin: "0 auto" }}>
-          <FadeIn>
+          <div className="landing-reveal-on-scroll">
             <div style={{ textAlign: "center", marginBottom: 52 }}>
               <SectionLabel num="07" text="FAQ" />
               <h2 style={{ fontSize: "clamp(28px, 3.5vw, 44px)", fontWeight: 800, letterSpacing: "-0.03em", color: "#fff", lineHeight: 1.1 }}>Questions, Answered</h2>
             </div>
-          </FadeIn>
+          </div>
           <div style={{ border: "1px solid rgba(255,255,255,0.07)", borderRadius: 16, overflow: "hidden" }}>
             {FAQ.map((item, i) => {
-              const open = openFaq === i;
+              const open = openFaqs.has(i);
               return (
-                <FadeIn key={item.q} delay={i * 0.05}>
-                  <div style={{ borderBottom: i < FAQ.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}>
-                    <button onClick={() => setOpenFaq(open ? null : i)} style={{
+                <div
+                  key={item.q}
+                  className={`landing-faq-item ${open ? "landing-faq-open" : ""}`}
+                  style={{ borderBottom: i < FAQ.length - 1 ? "1px solid rgba(255,255,255,0.05)" : "none" }}
+                >
+                  <button
+                    type="button"
+                    onClick={() => toggleFaq(i)}
+                    style={{
                       width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center",
                       padding: "22px 28px", background: "none", border: "none", cursor: "pointer", textAlign: "left", gap: 16
-                    }}>
-                      <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
-                        <span style={{ color: primary, fontSize: 11, fontWeight: 800, fontFamily: "'Space Grotesk', monospace", flexShrink: 0 }}>{String(i+1).padStart(2,"0")}</span>
-                        <span style={{ fontSize: 15, fontWeight: 600, color: open ? "#FF8C35" : "#ddd", lineHeight: 1.4 }}>{item.q}</span>
-                      </div>
-                      <span style={{ color: open ? primary : "#444", fontSize: 22, lineHeight: 1, flexShrink: 0, transition: "transform 0.3s", transform: open ? "rotate(45deg)" : "none" }}>+</span>
-                    </button>
-                    {open && (
-                      <div style={{ padding: "0 28px 22px 56px", background: "rgba(255,255,255,0.01)" }}>
-                        <p style={{ fontSize: 14, color: "#666", lineHeight: 1.8 }}>{item.a}</p>
-                      </div>
-                    )}
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 16, alignItems: "center" }}>
+                      <span style={{ color: primary, fontSize: 11, fontWeight: 800, fontFamily: "'Space Grotesk', monospace", flexShrink: 0 }}>{String(i+1).padStart(2,"0")}</span>
+                      <span style={{ fontSize: 15, fontWeight: 600, color: open ? "#FF8C35" : "#ddd", lineHeight: 1.4 }}>{item.q}</span>
+                    </div>
+                    <span className="landing-faq-icon" style={{ color: open ? primary : "#444", fontSize: 22, lineHeight: 1, flexShrink: 0 }}>+</span>
+                  </button>
+                  <div className="landing-faq-answer" style={{ paddingLeft: 28, paddingRight: 28 }}>
+                    <p style={{ fontSize: 14, color: "#666", lineHeight: 1.8, margin: 0, paddingLeft: 28 }}>{item.a}</p>
                   </div>
-                </FadeIn>
+                </div>
               );
             })}
           </div>
@@ -620,7 +652,7 @@ export default function LandingView() {
         {/* CTA */}
         <section style={{ padding: "80px 40px" }}>
           <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-            <FadeIn>
+            <div className="landing-reveal-on-scroll">
               <div style={{
                 background: "linear-gradient(135deg, rgba(255,107,0,0.12) 0%, rgba(255,107,0,0.03) 50%, rgba(255,107,0,0.08) 100%)",
                 border: "1px solid rgba(255,107,0,0.25)", borderRadius: 24, padding: "64px 56px",
@@ -631,7 +663,7 @@ export default function LandingView() {
                 <GlowOrb x="-100px" y="-100px" size="400px" opacity={0.1} />
                 <div style={{ position: "relative", zIndex: 1 }}>
                   <h2 style={{ fontSize: "clamp(28px, 4vw, 48px)", fontWeight: 800, color: "#fff", letterSpacing: "-0.03em", lineHeight: 1.1, marginBottom: 14 }}>
-                    Ready to <span className="gradient-text">Level Up?</span>
+                    Ready to <span className="gradient-text landing-text-glow">Level Up?</span>
                   </h2>
                   <p style={{ fontSize: 16, color: "#777", maxWidth: 440, lineHeight: 1.6 }}>
                     Join NeuraApp today and start learning across any discipline. Free to start — no credit card required.
@@ -642,7 +674,7 @@ export default function LandingView() {
                   <a href="/login" style={{ color: "#555", fontSize: 13, textDecoration: "none" }}>Already have an account? Sign in</a>
                 </div>
               </div>
-            </FadeIn>
+            </div>
           </div>
         </section>
 
