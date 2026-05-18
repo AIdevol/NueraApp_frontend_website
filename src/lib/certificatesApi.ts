@@ -1,4 +1,4 @@
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import { getNgrokHeaders, getPublicApiUrl } from "@/lib/publicUrl";
 
 export type CertificateStatus = "completed" | "in_progress";
 export type CertificateFilter = "all" | "completed" | "in_progress";
@@ -57,6 +57,7 @@ export async function fetchCertificates(params?: {
   try {
     const res = await fetch(`${base}/api/v1/certifications${query ? `?${query}` : ""}`, {
       cache: "no-store",
+      headers: getNgrokHeaders(),
     });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
@@ -89,7 +90,7 @@ export async function verifyCertificate(
   try {
     const res = await fetch(
       `${base}/api/v1/certifications/verify/${encodeURIComponent(trimmed)}`,
-      { cache: "no-store" }
+      { cache: "no-store", headers: getNgrokHeaders() }
     );
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {

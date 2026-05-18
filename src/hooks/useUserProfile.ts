@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import { getNgrokHeaders, getPublicApiUrl } from "@/lib/publicUrl";
 
 export interface UserProfileMe {
   full_name: string;
@@ -38,7 +38,10 @@ async function fetchProfileMe(): Promise<UserProfileMe | null> {
   inflight = (async () => {
     try {
       const res = await fetch(`${base}/api/v1/profile/me`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: {
+          ...getNgrokHeaders(),
+          Authorization: `Bearer ${token}`,
+        },
         cache: "no-store",
       });
       if (!res.ok) {

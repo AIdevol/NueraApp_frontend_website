@@ -3,7 +3,7 @@
  * Backend uses Portkey (primary) with direct Groq fallback; never put API keys in the browser.
  */
 
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import { getNgrokHeaders, getPublicApiUrl } from "@/lib/publicUrl";
 
 export type LearnLinkItem = { label: string; href: string };
 
@@ -49,6 +49,7 @@ export async function sendAiChatMessage(
     const res = await fetch(`${base}/api/v1/ai-chat`, {
       method: "POST",
       headers: {
+        ...getNgrokHeaders(),
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
       },

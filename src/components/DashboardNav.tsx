@@ -1,6 +1,6 @@
 "use client";
 
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import { getNgrokHeaders, getPublicApiUrl } from "@/lib/publicUrl";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -56,7 +56,7 @@ export function DashboardNav({ collapsed = false }: DashboardNavProps) {
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${getPublicApiUrl()}/api/v1/navigation/sections`)
+    fetch(`${getPublicApiUrl()}/api/v1/navigation/sections`, { headers: getNgrokHeaders() })
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
         if (cancelled || !data?.sections?.length) return;

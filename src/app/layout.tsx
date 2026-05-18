@@ -19,9 +19,18 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
-  title: "NeuraApp – Master AI & Machine Learning",
+  title: {
+    default: "NeuraApp",
+    template: "%s · NeuraApp",
+  },
   description:
     "Elevate your career with cutting-edge courses, real-world projects, and a community of experts. AI & Machine Learning Mastery platform.",
+  icons: {
+    icon: [{ url: "/logo.png", type: "image/png" }],
+    shortcut: "/logo.png",
+    apple: "/logo.png",
+  },
+  applicationName: "NeuraApp",
 };
 
 export default function RootLayout({

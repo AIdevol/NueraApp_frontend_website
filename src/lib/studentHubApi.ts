@@ -2,7 +2,7 @@
  * Types + helpers for student/career hub APIs (assignments, quizzes, etc.).
  */
 
-import { getPublicApiUrl } from "@/lib/publicUrl";
+import { getNgrokHeaders, getPublicApiUrl } from "@/lib/publicUrl";
 
 export async function fetchHubJson<T>(path: string): Promise<{ data: T | null; error: string }> {
   const base = getPublicApiUrl();
@@ -10,7 +10,10 @@ export async function fetchHubJson<T>(path: string): Promise<{ data: T | null; e
     return { data: null, error: "API URL not configured (NEXT_PUBLIC_API_URL)." };
   }
   try {
-    const res = await fetch(`${base}/api/v1${path}`, { cache: "no-store" });
+    const res = await fetch(`${base}/api/v1${path}`, {
+      cache: "no-store",
+      headers: getNgrokHeaders(),
+    });
     const json = await res.json().catch(() => ({}));
     if (!res.ok) {
       return {
